@@ -1,0 +1,4 @@
+[workspace]
+members = [
+    "spectre-agent", "spectre-graph", "spectre-rules",
+]
