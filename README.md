@@ -10,9 +10,9 @@ Spectre asks:
 
 ---
 
-## 🚀 Quick Start (V2 Resource Tracking)
+## 🚀 Quick Start (V3 Sliding Window Graph)
 
-Spectre is currently on **V2 (Resource Tracking)**. This version implements process-resource graph construction, monitoring newly spawned processes for file accesses (`READ` / `WRITE`) and network sockets (`CONNECT` / `LISTEN`), and rendering nested ASCII process-resource trees.
+Spectre is currently on **V3 (Sliding Window Graph)**. This version constructs an in-memory process-resource graph using NetworkX. All events (spawns, file events, socket connections) are managed inside a sliding window queue and pruned when they expire, bounding memory growth.
 
 ### Prerequisites
 * Python 3.8+
@@ -35,16 +35,16 @@ Spectre is currently on **V2 (Resource Tracking)**. This version implements proc
 > [!IMPORTANT]
 > **Quiet vs. Verbose Output Modes**
 > * **Quiet Mode (Default)**: Running `python main.py` runs quietly. It will **only** print to the terminal when a security alert is triggered (e.g., shell spawning downloader tools like `curl`).
-> * **Verbose Mode**: Running `python main.py --verbose` (or `-v`) prints **all** process spawns, file reads/writes, and network connections in the terminal in real time as they occur.
+> * **Verbose Mode**: Running `python main.py --verbose` (or `-v`) prints **all** process spawns, file reads/writes, and network connections, along with the NetworkX graph metrics, in the terminal in real time as they occur.
 
 3. **Run the HIDS detector (Quiet Mode - prints security alerts only):**
    ```bash
    python main.py
    ```
 
-4. **Run in Verbose Mode (prints all real-time events and resource trees):**
+4. **Run in Verbose Mode with Custom Graph Expiration Window (e.g., 10 seconds):**
    ```bash
-   python main.py --verbose --interval 0.1
+   python main.py --verbose --window-size 10.0 --interval 0.1
    ```
 
 5. **Triggering Events/Alerts:**
@@ -60,9 +60,11 @@ Spectre is currently on **V2 (Resource Tracking)**. This version implements proc
 * **[docs/progress.md](docs/progress.md)**: The current progress tracker of the system's increments.
 * **[docs/v0_report.md](docs/v0_report.md)**: Technical overview of the V0 Process Monitor implementation.
 * **[docs/v1_report.md](docs/v1_report.md)**: Technical overview of the V1 Rule-Based Detector and explanation engine.
-* **[docs/v2_report.md](docs/v2_report.md)**: Technical overview of the V2 Resource Tracking architecture, filters, and logs.
+* **[docs/v2_report.md](docs/v2_report.md)**: Technical overview of the V2 Resource Tracking architecture.
+* **[docs/v3_report.md](docs/v3_report.md)**: Technical overview of the V3 sliding window graph model and pruning mechanics.
 * **[main.py](main.py)**: Orchestration script running the detector.
 * **[sensor/](sensor/)**: Telemetry collection wrapper extracting process ancestry and active resource state.
+* **[graph/](graph/)**: NetworkX sliding window graph implementation with event-pruning queues.
 * **[rules/](rules/)**: Rules dataclass and preset list of suspicious behavior profiles.
 * **[detectors/](detectors/)**: Evaluates active process chains against the behavioral rules.
 * **[alerts/](alerts/)**: Explanation builder, console tree printer, and logging handlers.
@@ -74,6 +76,7 @@ Spectre is currently on **V2 (Resource Tracking)**. This version implements proc
 Spectre is evolving step-by-step:
 * **V0**: Process Monitor PoC.
 * **V1**: Rule-based behavior, scoring chains, and generating human-explainable alerts.
-* **V2 (Current)**: Resource tracing (files, sockets, read/write/connect/listen events).
-* **V3 (Next)**: Sliding window event expiration using NetworkX graphs.
+* **V2**: Resource tracing (files, sockets, read/write/connect/listen events).
+* **V3 (Current)**: Sliding window event expiration using NetworkX graphs.
+* **V4 (Next)**: Detection engine upgrades (weighted scoring, JSON rules).
 * *See [progress.md](docs/progress.md) for the full 17-step roadmap.*

@@ -9,7 +9,7 @@ This document tracks the implementation progress of Project Spectre through the 
 | **V0** | Process Monitor PoC | **Completed** | 2026-06-23 | Console tree representation of ancestry chains using `psutil`. |
 | **V1** | Rule-based Detector | **Completed** | 2026-06-24 | Tree building, scoring, explanation, alert logging. |
 | **V2** | Resource Tracking | **Completed** | 2026-06-24 | Files, Sockets, and READ/WRITE/CONNECT/LISTEN events. |
-| **V3** | Sliding Window Graph | *Not Started* | - | Event expiration, cleanup, rolling memory using `networkx`. |
+| **V3** | Sliding Window Graph | **Completed** | 2026-06-24 | Event expiration, cleanup, rolling memory using `networkx`. |
 | **V4** | Detection Engine | *Not Started* | - | Weighted scoring, JSON rules, thresholding. |
 | **V5** | Attack Mapping | *Not Started* | - | MITRE ATT&CK integration. |
 | **V6** | Persistence | *Not Started* | - | SQLite storage for events, alerts, and scores. |
