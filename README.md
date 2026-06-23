@@ -32,12 +32,17 @@ Spectre is currently on **V2 (Resource Tracking)**. This version implements proc
    pip install -r requirements.txt
    ```
 
-3. **Run the HIDS detector (runs quietly by default, only outputting security alerts):**
+> [!IMPORTANT]
+> **Quiet vs. Verbose Output Modes**
+> * **Quiet Mode (Default)**: Running `python main.py` runs quietly. It will **only** print to the terminal when a security alert is triggered (e.g., shell spawning downloader tools like `curl`).
+> * **Verbose Mode**: Running `python main.py --verbose` (or `-v`) prints **all** process spawns, file reads/writes, and network connections in the terminal in real time as they occur.
+
+3. **Run the HIDS detector (Quiet Mode - prints security alerts only):**
    ```bash
    python main.py
    ```
 
-4. **Run in Verbose Mode (prints all process spawns and resource events):**
+4. **Run in Verbose Mode (prints all real-time events and resource trees):**
    ```bash
    python main.py --verbose --interval 0.1
    ```
