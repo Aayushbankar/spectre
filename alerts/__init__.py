@@ -13,6 +13,57 @@ class Alert:
     explanation: str
     timestamp: float = field(default_factory=time.time)
 
+def format_process_resource_tree(chain: List[Dict]) -> List[str]:
+    """
+    Formats a process chain and its resource events (Files, Sockets)
+    as a clean, structured ASCII tree.
+    """
+    lines = []
+    if not chain:
+        return lines
+
+    def helper(idx: int, prefix: str):
+        proc = chain[idx]
+        cmd_str = " ".join(proc['cmdline']) if proc['cmdline'] else proc['name']
+        if len(cmd_str) > 80:
+            cmd_str = cmd_str[:77] + "..."
+        
+        proc_line = f"{proc['name']} (PID: {proc['pid']}) [Cmd: {cmd_str}]"
+        lines.append(f"{prefix}{proc_line}")
+
+        # Gather resource sub-items
+        resources = []
+        for f in proc.get("files", []):
+            resources.append(f"[{f['event']}] {f['path']}")
+        for c in proc.get("connections", []):
+            status_suffix = f" ({c['status']})" if c['status'] else ""
+            resources.append(f"[{c['event']}] {c['raddr']}{status_suffix}")
+
+        # Is there a next process in the chain?
+        has_next_proc = (idx < len(chain) - 1)
+        
+        # All children of this process node
+        children = []
+        for res in resources:
+            children.append(("resource", res))
+        if has_next_proc:
+            children.append(("process", idx + 1))
+
+        # Render children
+        for i, child in enumerate(children):
+            is_last = (i == len(children) - 1)
+            char_branch = "└── " if is_last else "├── "
+            char_extension = "    " if is_last else "│   "
+
+            child_type, child_val = child
+            if child_type == "resource":
+                lines.append(f"{prefix}{char_branch}{child_val}")
+            elif child_type == "process":
+                helper(child_val, prefix + char_extension)
+
+    helper(0, "")
+    return lines
+
 class ExplanationEngine:
     """
     Generates human-readable, detailed explanations for security alerts
@@ -23,7 +74,6 @@ class ExplanationEngine:
         parent_cmd = " ".join(parent['cmdline']) if parent['cmdline'] else parent['name']
         child_cmd = " ".join(child['cmdline']) if child['cmdline'] else child['name']
         
-        # Truncate command lines if they are too long
         if len(parent_cmd) > 80:
             parent_cmd = parent_cmd[:77] + "..."
         if len(child_cmd) > 80:
@@ -58,7 +108,7 @@ class ExplanationEngine:
 class AlertLogger:
     """
     Handles logging of security alerts to console and to file, formatting
-    each alert into a readable, detailed report.
+    each alert into a readable, detailed report with process-resource graph trees.
     """
     def __init__(self, log_file: str = "spectre_alerts.log"):
         self.logger = logging.getLogger("SpectreHIDS")
@@ -87,20 +137,12 @@ class AlertLogger:
         print(f"⚠️  SECURITY ALERT: {alert.rule_name.upper()}")
         print(f"Severity Score: {alert.score}/20")
         print(f"Explanation:    {alert.explanation}")
-        print("\nExecution Chain:")
+        print("\nExecution Chain & Resources:")
         
-        # Print the process chain tree
-        for i, proc in enumerate(alert.chain):
-            cmd_str = " ".join(proc['cmdline']) if proc['cmdline'] else proc['name']
-            if len(cmd_str) > 80:
-                cmd_str = cmd_str[:77] + "..."
-            display_str = f"{proc['name']} (PID: {proc['pid']}) [Cmd: {cmd_str}]"
-            
-            if i == 0:
-                print(f"  {display_str}")
-            else:
-                indent = "      " * (i - 1)
-                print(f"  {indent}└── {display_str}")
+        # Print the process-resource tree
+        tree_lines = format_process_resource_tree(alert.chain)
+        for line in tree_lines:
+            print(f"  {line}")
         
         print("!" * 60)
         sys.stdout.flush()

@@ -4,29 +4,22 @@ import argparse
 from sensor import ProcessSensor
 from rules import DEFAULT_RULES
 from detectors import DetectionEngine
-from alerts import Alert, ExplanationEngine, AlertLogger
+from alerts import Alert, ExplanationEngine, AlertLogger, format_process_resource_tree
 
 def print_raw_process_tree(chain):
     """
-    Prints a raw process chain to stdout (V0 fallback when running with --verbose).
+    Prints a raw process-resource tree to stdout (when running with --verbose).
     """
     if not chain:
         return
-    print("\n[SPAWN DETECTED]")
-    for i, proc in enumerate(chain):
-        cmd_str = " ".join(proc['cmdline']) if proc['cmdline'] else proc['name']
-        if len(cmd_str) > 80:
-            cmd_str = cmd_str[:77] + "..."
-        display_str = f"{proc['name']} (PID: {proc['pid']}) [Cmd: {cmd_str}]"
-        if i == 0:
-            print(display_str)
-        else:
-            indent = "    " * (i - 1)
-            print(f"{indent}└── {display_str}")
+    print("\n[EVENT DETECTED]")
+    tree_lines = format_process_resource_tree(chain)
+    for line in tree_lines:
+        print(line)
     sys.stdout.flush()
 
 def main():
-    parser = argparse.ArgumentParser(description="Spectre V1: Incremental HIDS Rule-Based Detector")
+    parser = argparse.ArgumentParser(description="Spectre V2: Incremental HIDS Resource Tracker")
     parser.add_argument(
         "--interval", 
         type=float, 
@@ -42,11 +35,11 @@ def main():
     parser.add_argument(
         "--verbose", "-v",
         action="store_true",
-        help="Enable verbose mode to print all process spawns (default: print alerts only)"
+        help="Enable verbose mode to print all process/resource events (default: print alerts only)"
     )
     args = parser.parse_args()
 
-    print(f"[*] Starting Spectre V1 HIDS...")
+    print(f"[*] Starting Spectre V2 HIDS...")
     print(f"[*] Alert Log file: {args.log_file}")
     print(f"[*] Polling interval: {args.interval}s")
     print(f"[*] Active rules loaded: {len(DEFAULT_RULES)}")
@@ -59,11 +52,15 @@ def main():
     alert_logger = AlertLogger(log_file=args.log_file)
 
     print(f"[*] Initial host process snapshot captured.")
-    print(f"[*] Active host intrusion monitoring running. Press Ctrl+C to stop.\n" + "="*60)
+    print(f"[*] Active host intrusion and resource monitoring running. Press Ctrl+C to stop.\n" + "="*60)
     sys.stdout.flush()
 
+    # Track triggered alerts to prevent duplicate logs on resource updates
+    # Elements: (rule_id, child_pid, child_create_time)
+    seen_alerts = set()
+
     try:
-        # Start monitoring new process spawn events
+        # Start monitoring new process spawns and resource updates
         for chain in sensor.start_monitoring():
             # Evaluate the process chain for matches
             matches = detector.evaluate_chain(chain)
@@ -71,6 +68,11 @@ def main():
             if matches:
                 # Process matches and generate alerts
                 for rule, parent, child in matches:
+                    alert_key = (rule.id, child["pid"], child["create_time"])
+                    if alert_key in seen_alerts:
+                        continue
+                    
+                    seen_alerts.add(alert_key)
                     explanation = ExplanationEngine.generate(rule.id, parent, child)
                     alert = Alert(
                         rule_id=rule.id,
@@ -81,11 +83,11 @@ def main():
                     )
                     alert_logger.log_alert(alert)
             elif args.verbose:
-                # If no rule was matched, only print the process tree in verbose mode
+                # If no rule was matched, only print the event tree in verbose mode
                 print_raw_process_tree(chain)
 
     except KeyboardInterrupt:
-        print("\n[*] Stopping Spectre V1 HIDS.")
+        print("\n[*] Stopping Spectre V2 HIDS.")
         sys.exit(0)
 
 if __name__ == "__main__":
