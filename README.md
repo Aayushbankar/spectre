@@ -10,9 +10,9 @@ Spectre asks:
 
 ---
 
-## 🚀 Quick Start (V0 Process Monitor PoC)
+## 🚀 Quick Start (V1 Rule-Based Behavioral Detector)
 
-Spectre is currently on **V0 (Process Monitor PoC)**. This version acts as the baseline telemetry monitor, tracking new process spawns and reconstructing their entire ancestry chain (from child up to the init daemon / systemd).
+Spectre is currently on **V1 (Rule-Based Behavioral Detector)**. This version implements a decoupled detection engine that matches process ancestry chains against behavioral rules, assigns threat scores, generates detailed explanations, and logs alerts to `spectre_alerts.log`.
 
 ### Prerequisites
 * Python 3.8+
@@ -32,17 +32,20 @@ Spectre is currently on **V0 (Process Monitor PoC)**. This version acts as the b
    pip install -r requirements.txt
    ```
 
-3. **Run the process monitor:**
+3. **Run the HIDS detector (runs quietly by default, only outputting security alerts):**
    ```bash
    python main.py
    ```
 
-4. **Tune Polling Frequency (Optional):**
-   Tune the polling loop speed to find the sweet spot between capturing fast processes and keeping CPU usage minimal (target `<5%` CPU, `<200MB` RAM).
+4. **Run in Verbose Mode (prints all process spawns, like V0):**
    ```bash
-   # Run with a 100ms interval (default is 0.5s)
-   python main.py --interval 0.1
+   python main.py --verbose --interval 0.1
    ```
+
+5. **Triggering Alerts:**
+   Run common tools from a shell terminal to verify matches:
+   * **Downloader**: `curl --version`
+   * **Network Tool**: `nc -l 9999`
 
 ---
 
@@ -51,16 +54,20 @@ Spectre is currently on **V0 (Process Monitor PoC)**. This version acts as the b
 * **[docs/design_doc.md](docs/design_doc.md)**: The master design document listing the vision, principles, core entity relations, and the 17-stage incremental SDLC roadmap.
 * **[docs/progress.md](docs/progress.md)**: The current progress tracker of the system's increments.
 * **[docs/v0_report.md](docs/v0_report.md)**: Technical overview of the V0 Process Monitor implementation and sample trace logs.
-* **[main.py](main.py)**: The entrypoint script containing the V0 process-polling and ancestry-tracing engine.
-* **[requirements.txt](requirements.txt)**: List of dependencies (`psutil`).
+* **[docs/v1_report.md](docs/v1_report.md)**: Technical overview of the V1 Rule-Based Detector, explanation engine, and verification logs.
+* **[main.py](main.py)**: Orchestration script running the detector.
+* **[sensor/](sensor/)**: Telemetry collection wrapper extracting process ancestry.
+* **[rules/](rules/)**: Rules dataclass and preset list of suspicious behavior profiles.
+* **[detectors/](detectors/)**: Evaluates active process chains against the behavioral rules.
+* **[alerts/](alerts/)**: Explanation builder and logging handlers.
 
 ---
 
 ## 🛠️ Incremental SDLC Roadmap
 
 Spectre is evolving step-by-step:
-* **V0 (Current)**: Process Monitor PoC.
-* **V1 (Next)**: Rule-based behavior, scoring chains, and generating human-explainable alerts.
-* **V2**: Resource tracing (files, sockets, read/write/connect events).
+* **V0**: Process Monitor PoC.
+* **V1 (Current)**: Rule-based behavior, scoring chains, and generating human-explainable alerts.
+* **V2 (Next)**: Resource tracing (files, sockets, read/write/connect events).
 * **V3**: Sliding window event expiration using NetworkX graphs.
 * *See [progress.md](docs/progress.md) for the full 17-step roadmap.*

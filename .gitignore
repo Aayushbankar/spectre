@@ -1,1 +1,4 @@
-venv
+venv/
+__pycache__/
+*.pyc
+spectre_alerts.log
