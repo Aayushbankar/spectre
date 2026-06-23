@@ -10,7 +10,7 @@ This document tracks the implementation progress of Project Spectre through the 
 | **V1** | Rule-based Detector | **Completed** | 2026-06-24 | Tree building, scoring, explanation, alert logging. |
 | **V2** | Resource Tracking | **Completed** | 2026-06-24 | Files, Sockets, and READ/WRITE/CONNECT/LISTEN events. |
 | **V3** | Sliding Window Graph | **Completed** | 2026-06-24 | Event expiration, cleanup, rolling memory using `networkx`. |
-| **V4** | Detection Engine | *Not Started* | - | Weighted scoring, JSON rules, thresholding. |
+| **V4** | Detection Engine | **Completed** | 2026-06-24 | Weighted scoring, JSON rules, thresholding. |
 | **V5** | Attack Mapping | *Not Started* | - | MITRE ATT&CK integration. |
 | **V6** | Persistence | *Not Started* | - | SQLite storage for events, alerts, and scores. |
 | **V7** | REST API | *Not Started* | - | FastAPI endpoints for querying events, alerts, and chains. |

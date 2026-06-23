@@ -2,9 +2,9 @@
 import sys
 import argparse
 from sensor import ProcessSensor
-from rules import DEFAULT_RULES
+from rules import load_rules_from_file
 from detectors import DetectionEngine
-from alerts import Alert, ExplanationEngine, AlertLogger, format_process_resource_tree
+from alerts import Alert, AlertLogger, format_process_resource_tree
 from graph import ProcessResourceGraph
 
 def print_raw_process_tree(chain):
@@ -20,7 +20,7 @@ def print_raw_process_tree(chain):
     sys.stdout.flush()
 
 def main():
-    parser = argparse.ArgumentParser(description="Spectre V3: Incremental HIDS Sliding Window Graph")
+    parser = argparse.ArgumentParser(description="Spectre V4: Dynamic Rules & Threat Score Accumulation")
     parser.add_argument(
         "--interval", 
         type=float, 
@@ -36,7 +36,7 @@ def main():
     parser.add_argument(
         "--verbose", "-v",
         action="store_true",
-        help="Enable verbose mode to print all process/resource events (default: print alerts only)"
+        help="Enable verbose mode to print all process/resource events and sub-threshold alerts (default: print threshold alerts only)"
     )
     parser.add_argument(
         "--window-size", "-w",
@@ -44,19 +44,35 @@ def main():
         default=60.0,
         help="Sliding time window in seconds for event expiration (default: 60.0)"
     )
+    parser.add_argument(
+        "--rules", "-r",
+        type=str,
+        default="rules.json",
+        help="Path to the behavioral rules JSON configuration file (default: rules.json)"
+    )
+    parser.add_argument(
+        "--threshold", "-t",
+        type=int,
+        default=15,
+        help="Threat score threshold for triggering high-severity alerts (default: 15)"
+    )
     args = parser.parse_args()
 
-    print(f"[*] Starting Spectre V3 HIDS...")
+    print(f"[*] Starting Spectre V4 HIDS...")
     print(f"[*] Alert Log file: {args.log_file}")
     print(f"[*] Polling interval: {args.interval}s")
     print(f"[*] Sliding Graph window size: {args.window_size}s")
-    print(f"[*] Active rules loaded: {len(DEFAULT_RULES)}")
-    for rule in DEFAULT_RULES:
-        print(f"    - {rule.name} (Severity: {rule.score})")
+    print(f"[*] Threat Threshold: {args.threshold}")
+    
+    # Load rules dynamically
+    rules = load_rules_from_file(args.rules)
+    print(f"[*] Loaded {len(rules)} behavioral rules from '{args.rules}':")
+    for rule in rules:
+        print(f"    - {rule.name} (Score: {rule.score})")
 
     # Initialize components
     sensor = ProcessSensor(interval=args.interval)
-    detector = DetectionEngine(rules=DEFAULT_RULES)
+    detector = DetectionEngine(rules=rules)
     alert_logger = AlertLogger(log_file=args.log_file)
     graph = ProcessResourceGraph(window_size=args.window_size)
 
@@ -64,20 +80,16 @@ def main():
     print(f"[*] Active host intrusion and resource monitoring running. Press Ctrl+C to stop.\n" + "="*60)
     sys.stdout.flush()
 
-    # Track triggered alerts to prevent duplicate logs on resource updates
-    seen_alerts = set()
+    # Track threat scores of process sessions (keyed by the oldest monitored ancestor process)
+    # leader_key -> {"score": int, "triggered_rules": set, "events": list}
+    session_scores = {}
+    
+    # Track the last logged score for each session to prevent alert spam
+    last_logged_score = {}
 
     try:
-        # We also run a periodic check for graph expiration even when there are no new sensor yields
-        # Since sensor.start_monitoring() blocks on yields, we can do it when we receive yields.
-        # But wait! If the sensor doesn't yield, we still want old events to expire!
-        # Since start_monitoring() is a generator yielding on events, if there are NO events, the loop blocks.
-        # This is fine for V3 because graph updates only happen when the sensor detects something.
-        # We can also perform graph expiration on each loop iteration inside sensor.start_monitoring(),
-        # or inside main.py whenever we receive a chain.
-        # Let's run update and expiration whenever the sensor yields.
         for chain in sensor.start_monitoring():
-            # Update running processes database to keep alive processes in the graph
+            # Update running processes database
             graph.update_active_processes(sensor.known_processes)
             
             # Feed current telemetry chain to the NetworkX graph
@@ -86,42 +98,85 @@ def main():
             # Expire old events and nodes past the window size
             graph.expire_old_events()
             
-            # Evaluate the process chain for matches
+            # Find the oldest monitored ancestor in this chain (the session leader)
+            session_leader = chain[0]
+            leader_key = (session_leader["pid"], session_leader["create_time"])
+            
+            if leader_key not in session_scores:
+                session_scores[leader_key] = {
+                    "score": 0,
+                    "triggered_rules": set(),
+                    "events": []
+                }
+            
+            session_info = session_scores[leader_key]
+            
+            # Evaluate current chain for behavior matches
             matches = detector.evaluate_chain(chain)
             
-            if matches:
-                # Process matches and generate alerts
-                for rule, parent, child in matches:
-                    alert_key = (rule.id, child["pid"], child["create_time"])
-                    if alert_key in seen_alerts:
-                        continue
+            for rule, proc, detail in matches:
+                # Unique signature for the matched behavior event
+                sig = (rule.id, proc["pid"], proc["create_time"], detail)
+                
+                if sig not in session_info["triggered_rules"]:
+                    session_info["triggered_rules"].add(sig)
+                    session_info["score"] += rule.score
                     
-                    seen_alerts.add(alert_key)
-                    explanation = ExplanationEngine.generate(rule.id, parent, child)
+                    event_data = {
+                        "rule_name": rule.name,
+                        "score": rule.score,
+                        "offending_proc": proc["name"],
+                        "pid": proc["pid"],
+                        "detail": detail
+                    }
+                    session_info["events"].append(event_data)
+                    
+                    # Log warning to alert log file
+                    log_msg = (
+                        f"[WARNING] Process '{proc['name']}' (PID: {proc['pid']}) triggered "
+                        f"rule '{rule.name}' (Score: {rule.score}) | Event: {detail} | "
+                        f"Session Leader PID: {session_leader['pid']} (Total Score: {session_info['score']}/{args.threshold})"
+                    )
+                    alert_logger.logger.warning(log_msg)
+                    
+                    if args.verbose:
+                        print(f"[*] [WARNING] {proc['name']} (PID: {proc['pid']}) triggered '{rule.name}' (+{rule.score}) | Total Session Score: {session_info['score']}/{args.threshold}")
+                        sys.stdout.flush()
+
+            # Check if session score crossed/increased past the threshold
+            current_score = session_info["score"]
+            if current_score >= args.threshold:
+                if current_score > last_logged_score.get(leader_key, 0):
+                    last_logged_score[leader_key] = current_score
+                    
+                    # Format dynamic multi-event explanation
+                    explanation = (
+                        f"Process session leader '{session_leader['name']}' (PID: {session_leader['pid']}) "
+                        f"accumulated threat score {current_score} which exceeds the alert threshold of {args.threshold}!\n"
+                        f"Triggered behaviors:\n"
+                    )
+                    for ev in session_info["events"]:
+                        explanation += f"  - {ev['rule_name']} (Score: {ev['score']}) | Process '{ev['offending_proc']}' (PID: {ev['pid']}) -> {ev['detail']}\n"
+                    
+                    # Log high severity alert
                     alert = Alert(
-                        rule_id=rule.id,
-                        rule_name=rule.name,
-                        score=rule.score,
+                        rule_id="session_threshold_exceeded",
+                        rule_name="Process Session Exceeded Threat Threshold",
+                        score=current_score,
                         chain=chain,
                         explanation=explanation
                     )
                     alert_logger.log_alert(alert)
-                    
-                    if args.verbose:
-                        # Log graph metrics
-                        stats = graph.get_stats()
-                        print(f"[GRAPH STATE] Nodes: {stats['total_nodes']} (Proc: {stats['processes']}, File: {stats['files']}, Sock: {stats['sockets']}), Edges: {stats['edges']}")
-            elif args.verbose:
-                # If no rule was matched, print the event tree
+
+            # In verbose mode, print raw tree and graph stats
+            if args.verbose:
                 print_raw_process_tree(chain)
-                
-                # Print graph metrics
                 stats = graph.get_stats()
                 print(f"[GRAPH STATE] Nodes: {stats['total_nodes']} (Proc: {stats['processes']}, File: {stats['files']}, Sock: {stats['sockets']}), Edges: {stats['edges']}")
                 sys.stdout.flush()
 
     except KeyboardInterrupt:
-        print("\n[*] Stopping Spectre V3 HIDS.")
+        print("\n[*] Stopping Spectre V4 HIDS.")
         sys.exit(0)
 
 if __name__ == "__main__":

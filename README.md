@@ -10,9 +10,9 @@ Spectre asks:
 
 ---
 
-## 🚀 Quick Start (V3 Sliding Window Graph)
+## 🚀 Quick Start (V4 Detection Engine)
 
-Spectre is currently on **V3 (Sliding Window Graph)**. This version constructs an in-memory process-resource graph using NetworkX. All events (spawns, file events, socket connections) are managed inside a sliding window queue and pruned when they expire, bounding memory growth.
+Spectre is currently on **V4 (Detection Engine)**. This version introduces dynamic JSON rules loading, process-resource rule matching, and weighted threat score accumulation across process session trees.
 
 ### Prerequisites
 * Python 3.8+
@@ -42,15 +42,21 @@ Spectre is currently on **V3 (Sliding Window Graph)**. This version constructs a
    python main.py
    ```
 
-4. **Run in Verbose Mode with Custom Graph Expiration Window (e.g., 10 seconds):**
+4. **Run in Verbose Mode with Custom Rules & Threshold:**
    ```bash
-   python main.py --verbose --window-size 10.0 --interval 0.1
+   python main.py --verbose --rules rules.json --threshold 20 --interval 0.1
    ```
 
-5. **Triggering Events/Alerts:**
-   - **File Read Event**: Run a process reading a file (e.g. `python3 -c "f = open('/etc/hosts'); import time; time.sleep(3)"`).
-   - **Socket Connect Event**: Run a process establishing a network connection (e.g. `python3 -c "import socket, time; s = socket.socket(); s.connect(('8.8.8.8', 53)); time.sleep(3)"`).
-   - **Suspicious Downloader/Tool Alert**: Trigger alerts by running `curl --version` or `nc -l 9999`.
+---
+
+## 🧪 E2E Verification Tests
+
+V4 includes an automated E2E verification test suite to simulate and assert threat escalation behaviors under `tests/v4/`.
+
+Run the test suite directly:
+```bash
+python3 tests/v4/run_test.py
+```
 
 ---
 
@@ -62,12 +68,15 @@ Spectre is currently on **V3 (Sliding Window Graph)**. This version constructs a
 * **[docs/v1_report.md](docs/v1_report.md)**: Technical overview of the V1 Rule-Based Detector and explanation engine.
 * **[docs/v2_report.md](docs/v2_report.md)**: Technical overview of the V2 Resource Tracking architecture.
 * **[docs/v3_report.md](docs/v3_report.md)**: Technical overview of the V3 sliding window graph model and pruning mechanics.
+* **[docs/v4_report.md](docs/v4_report.md)**: Technical overview of the V4 Detection Engine and E2E test suite.
 * **[main.py](main.py)**: Orchestration script running the detector.
+* **[rules.json](rules.json)**: JSON configuration containing all behavioral rules.
 * **[sensor/](sensor/)**: Telemetry collection wrapper extracting process ancestry and active resource state.
 * **[graph/](graph/)**: NetworkX sliding window graph implementation with event-pruning queues.
 * **[rules/](rules/)**: Rules dataclass and preset list of suspicious behavior profiles.
 * **[detectors/](detectors/)**: Evaluates active process chains against the behavioral rules.
 * **[alerts/](alerts/)**: Explanation builder, console tree printer, and logging handlers.
+* **[tests/](tests/)**: Version-specific automated test suites and simulation triggers.
 
 ---
 
@@ -77,6 +86,7 @@ Spectre is evolving step-by-step:
 * **V0**: Process Monitor PoC.
 * **V1**: Rule-based behavior, scoring chains, and generating human-explainable alerts.
 * **V2**: Resource tracing (files, sockets, read/write/connect/listen events).
-* **V3 (Current)**: Sliding window event expiration using NetworkX graphs.
-* **V4 (Next)**: Detection engine upgrades (weighted scoring, JSON rules).
+* **V3**: Sliding window event expiration using NetworkX graphs.
+* **V4 (Current)**: Detection Engine upgrades (dynamic JSON rules, weighted session scoring, custom threat thresholds).
+* **V5 (Next)**: Attack Mapping (MITRE ATT&CK integration).
 * *See [progress.md](docs/progress.md) for the full 17-step roadmap.*

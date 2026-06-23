@@ -1,0 +1,51 @@
+[
+  {
+    "id": "web_server_shell",
+    "name": "Web Server Spawning Shell",
+    "score": 20,
+    "description": "A web server process spawned an interactive shell. This is a common pattern for web shells and remote code execution.",
+    "parent_names": ["nginx", "apache2", "httpd", "lighttpd", "node", "tomcat"],
+    "child_names": ["bash", "sh", "dash", "zsh", "ash"]
+  },
+  {
+    "id": "shell_network_tool",
+    "name": "Shell Spawning Network Tool",
+    "score": 15,
+    "description": "A shell process spawned a network utility, which could indicate scanning, reconnaissance, or port forwarding.",
+    "parent_names": ["bash", "sh", "dash", "zsh", "ash"],
+    "child_names": ["nc", "netcat", "ncat", "nmap", "socat", "hydra"]
+  },
+  {
+    "id": "shell_downloader",
+    "name": "Shell Spawning Downloader",
+    "score": 10,
+    "description": "A shell process spawned a web transfer utility, potentially attempting to download a secondary payload.",
+    "parent_names": ["bash", "sh", "dash", "zsh", "ash"],
+    "child_names": ["curl", "wget", "tftp", "ftp"]
+  },
+  {
+    "id": "web_server_compiler",
+    "name": "Web Server Spawning Compiler or Interpreter",
+    "score": 18,
+    "description": "A web server process spawned a compiler, build tool, or scripting interpreter. This is highly suspicious and common in exploit delivery.",
+    "parent_names": ["nginx", "apache2", "httpd", "lighttpd", "node", "tomcat"],
+    "child_names": ["gcc", "g++", "make", "python", "python3", "perl", "ruby", "php"]
+  },
+  {
+    "id": "python_hosts_read",
+    "name": "Python Accessing Hosts Configuration",
+    "score": 12,
+    "description": "A python process performed a read operation on the /etc/hosts file, which could indicate host-redirection reconnaissance.",
+    "process_names": ["python", "python3"],
+    "file_paths": ["/etc/hosts"],
+    "file_events": ["READ"]
+  },
+  {
+    "id": "python_outbound_dns",
+    "name": "Python Outbound Socket Connection",
+    "score": 14,
+    "description": "A python process established an outbound network connection to an external address.",
+    "process_names": ["python", "python3"],
+    "socket_events": ["CONNECT"]
+  }
+]
