@@ -14,7 +14,7 @@ This document tracks the implementation progress of Project Spectre through the 
 | **V5** | Attack Mapping | **Completed** | 2026-06-25 | MITRE ATT&CK integration in rules, warnings, and alerts. |
 | **V6** | Persistence | **Completed** | 2026-06-25 | SQLite storage for events, alerts, and session scores. |
 | **V7** | REST API | **Completed** | 2026-06-25 | FastAPI endpoints for querying events, alerts, and chains. |
-| **V8** | Dashboard | *Not Started* | - | Next.js, TailwindCSS frontend with force-directed graphs. |
+| **V8** | Dashboard | **Completed** | 2026-06-25 | Static HTML, CSS (glassmorphism), and JS polling interface. |
 | **V9** | YARA Integration | *Not Started* | - | Hash lookup and string signature file scans. |
 | **V10**| Containment | *Not Started* | - | Tree killing, process quarantining, SIGTERM/SIGSTOP actions. |
 | **V11**| Attack Replay | *Not Started* | - | Atomic Red Team simulation runner. |
