@@ -6,6 +6,7 @@ from rules import load_rules_from_file
 from detectors import DetectionEngine
 from alerts import Alert, AlertLogger, format_process_resource_tree
 from graph import ProcessResourceGraph
+from storage import SpectreDB
 
 def print_raw_process_tree(chain):
     """
@@ -20,7 +21,7 @@ def print_raw_process_tree(chain):
     sys.stdout.flush()
 
 def main():
-    parser = argparse.ArgumentParser(description="Spectre V5: MITRE ATT&CK Attack Mapping")
+    parser = argparse.ArgumentParser(description="Spectre V6: SQLite Persistence")
     parser.add_argument(
         "--interval", 
         type=float, 
@@ -56,10 +57,17 @@ def main():
         default=15,
         help="Threat score threshold for triggering high-severity alerts (default: 15)"
     )
+    parser.add_argument(
+        "--db",
+        type=str,
+        default="spectre.db",
+        help="Path to SQLite database for event persistence (default: spectre.db)"
+    )
     args = parser.parse_args()
 
-    print(f"[*] Starting Spectre V5 HIDS...")
+    print(f"[*] Starting Spectre V6 HIDS...")
     print(f"[*] Alert Log file: {args.log_file}")
+    print(f"[*] Database: {args.db}")
     print(f"[*] Polling interval: {args.interval}s")
     print(f"[*] Sliding Graph window size: {args.window_size}s")
     print(f"[*] Threat Threshold: {args.threshold}")
@@ -77,6 +85,7 @@ def main():
     detector = DetectionEngine(rules=rules)
     alert_logger = AlertLogger(log_file=args.log_file)
     graph = ProcessResourceGraph(window_size=args.window_size)
+    db = SpectreDB(db_path=args.db)
 
     print(f"[*] Initial host process snapshot captured.")
     print(f"[*] Active host intrusion and resource monitoring running. Press Ctrl+C to stop.\n" + "="*60)
@@ -135,6 +144,23 @@ def main():
                     }
                     session_info["events"].append(event_data)
                     
+                    # Persist event to SQLite
+                    db.insert_event(
+                        event_type=rule.id,
+                        proc_pid=proc["pid"],
+                        proc_name=proc["name"],
+                        detail=detail,
+                        mitre=mitre_str
+                    )
+                    
+                    # Update session score in SQLite
+                    db.upsert_session(
+                        leader_pid=session_leader["pid"],
+                        leader_name=session_leader["name"],
+                        leader_ctime=session_leader["create_time"],
+                        total_score=session_info["score"]
+                    )
+                    
                     # Log warning to alert log file
                     mitre_log = f" | MITRE: {mitre_str}" if mitre_str else ""
                     log_msg = (
@@ -174,6 +200,15 @@ def main():
                         explanation=explanation
                     )
                     alert_logger.log_alert(alert)
+                    
+                    # Persist alert to SQLite
+                    db.insert_alert(
+                        rule_id="session_threshold_exceeded",
+                        rule_name="Process Session Exceeded Threat Threshold",
+                        score=current_score,
+                        chain=chain,
+                        explanation=explanation
+                    )
 
             # In verbose mode, print raw tree and graph stats
             if args.verbose:
@@ -183,7 +218,8 @@ def main():
                 sys.stdout.flush()
 
     except KeyboardInterrupt:
-        print("\n[*] Stopping Spectre V5 HIDS.")
+        db.close()
+        print("\n[*] Stopping Spectre V6 HIDS.")
         sys.exit(0)
 
 if __name__ == "__main__":
