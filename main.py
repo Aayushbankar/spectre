@@ -20,7 +20,7 @@ def print_raw_process_tree(chain):
     sys.stdout.flush()
 
 def main():
-    parser = argparse.ArgumentParser(description="Spectre V4: Dynamic Rules & Threat Score Accumulation")
+    parser = argparse.ArgumentParser(description="Spectre V5: MITRE ATT&CK Attack Mapping")
     parser.add_argument(
         "--interval", 
         type=float, 
@@ -58,7 +58,7 @@ def main():
     )
     args = parser.parse_args()
 
-    print(f"[*] Starting Spectre V4 HIDS...")
+    print(f"[*] Starting Spectre V5 HIDS...")
     print(f"[*] Alert Log file: {args.log_file}")
     print(f"[*] Polling interval: {args.interval}s")
     print(f"[*] Sliding Graph window size: {args.window_size}s")
@@ -68,7 +68,9 @@ def main():
     rules = load_rules_from_file(args.rules)
     print(f"[*] Loaded {len(rules)} behavioral rules from '{args.rules}':")
     for rule in rules:
-        print(f"    - {rule.name} (Score: {rule.score})")
+        mitre_str = rule.get_mitre_str()
+        mitre_suffix = f" | MITRE: {mitre_str}" if mitre_str else ""
+        print(f"    - {rule.name} (Score: {rule.score}){mitre_suffix}")
 
     # Initialize components
     sensor = ProcessSensor(interval=args.interval)
@@ -122,25 +124,29 @@ def main():
                     session_info["triggered_rules"].add(sig)
                     session_info["score"] += rule.score
                     
+                    mitre_str = rule.get_mitre_str()
                     event_data = {
                         "rule_name": rule.name,
                         "score": rule.score,
                         "offending_proc": proc["name"],
                         "pid": proc["pid"],
-                        "detail": detail
+                        "detail": detail,
+                        "mitre": mitre_str
                     }
                     session_info["events"].append(event_data)
                     
                     # Log warning to alert log file
+                    mitre_log = f" | MITRE: {mitre_str}" if mitre_str else ""
                     log_msg = (
                         f"[WARNING] Process '{proc['name']}' (PID: {proc['pid']}) triggered "
-                        f"rule '{rule.name}' (Score: {rule.score}) | Event: {detail} | "
+                        f"rule '{rule.name}' (Score: {rule.score}) | Event: {detail}{mitre_log} | "
                         f"Session Leader PID: {session_leader['pid']} (Total Score: {session_info['score']}/{args.threshold})"
                     )
                     alert_logger.logger.warning(log_msg)
                     
                     if args.verbose:
-                        print(f"[*] [WARNING] {proc['name']} (PID: {proc['pid']}) triggered '{rule.name}' (+{rule.score}) | Total Session Score: {session_info['score']}/{args.threshold}")
+                        mitre_v = f" [{mitre_str}]" if mitre_str else ""
+                        print(f"[*] [WARNING] {proc['name']} (PID: {proc['pid']}) triggered '{rule.name}' (+{rule.score}){mitre_v} | Total Session Score: {session_info['score']}/{args.threshold}")
                         sys.stdout.flush()
 
             # Check if session score crossed/increased past the threshold
@@ -156,7 +162,8 @@ def main():
                         f"Triggered behaviors:\n"
                     )
                     for ev in session_info["events"]:
-                        explanation += f"  - {ev['rule_name']} (Score: {ev['score']}) | Process '{ev['offending_proc']}' (PID: {ev['pid']}) -> {ev['detail']}\n"
+                        mitre_part = f" | MITRE: {ev['mitre']}" if ev.get('mitre') else ""
+                        explanation += f"  - {ev['rule_name']} (Score: {ev['score']}) | Process '{ev['offending_proc']}' (PID: {ev['pid']}) -> {ev['detail']}{mitre_part}\n"
                     
                     # Log high severity alert
                     alert = Alert(
@@ -176,7 +183,7 @@ def main():
                 sys.stdout.flush()
 
     except KeyboardInterrupt:
-        print("\n[*] Stopping Spectre V4 HIDS.")
+        print("\n[*] Stopping Spectre V5 HIDS.")
         sys.exit(0)
 
 if __name__ == "__main__":

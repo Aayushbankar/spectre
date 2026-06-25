@@ -11,7 +11,7 @@ This document tracks the implementation progress of Project Spectre through the 
 | **V2** | Resource Tracking | **Completed** | 2026-06-24 | Files, Sockets, and READ/WRITE/CONNECT/LISTEN events. |
 | **V3** | Sliding Window Graph | **Completed** | 2026-06-24 | Event expiration, cleanup, rolling memory using `networkx`. |
 | **V4** | Detection Engine | **Completed** | 2026-06-24 | Weighted scoring, JSON rules, thresholding. |
-| **V5** | Attack Mapping | *Not Started* | - | MITRE ATT&CK integration. |
+| **V5** | Attack Mapping | **Completed** | 2026-06-25 | MITRE ATT&CK integration in rules, warnings, and alerts. |
 | **V6** | Persistence | *Not Started* | - | SQLite storage for events, alerts, and scores. |
 | **V7** | REST API | *Not Started* | - | FastAPI endpoints for querying events, alerts, and chains. |
 | **V8** | Dashboard | *Not Started* | - | Next.js, TailwindCSS frontend with force-directed graphs. |
