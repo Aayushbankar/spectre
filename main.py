@@ -7,6 +7,9 @@ from detectors import DetectionEngine
 from alerts import Alert, AlertLogger, format_process_resource_tree
 from graph import ProcessResourceGraph
 from storage import SpectreDB
+from api import create_api
+import threading
+import uvicorn
 
 def print_raw_process_tree(chain):
     """
@@ -21,7 +24,7 @@ def print_raw_process_tree(chain):
     sys.stdout.flush()
 
 def main():
-    parser = argparse.ArgumentParser(description="Spectre V6: SQLite Persistence")
+    parser = argparse.ArgumentParser(description="Spectre V7: REST API")
     parser.add_argument(
         "--interval", 
         type=float, 
@@ -58,6 +61,17 @@ def main():
         help="Threat score threshold for triggering high-severity alerts (default: 15)"
     )
     parser.add_argument(
+        "--api",
+        action="store_true",
+        help="Enable the REST API and Dashboard server (default: disabled)"
+    )
+    parser.add_argument(
+        "--api-port",
+        type=int,
+        default=8000,
+        help="Port for the REST API server (default: 8000)"
+    )
+    parser.add_argument(
         "--db",
         type=str,
         default="spectre.db",
@@ -65,7 +79,7 @@ def main():
     )
     args = parser.parse_args()
 
-    print(f"[*] Starting Spectre V6 HIDS...")
+    print(f"[*] Starting Spectre V7 HIDS...")
     print(f"[*] Alert Log file: {args.log_file}")
     print(f"[*] Database: {args.db}")
     print(f"[*] Polling interval: {args.interval}s")
@@ -86,6 +100,24 @@ def main():
     alert_logger = AlertLogger(log_file=args.log_file)
     graph = ProcessResourceGraph(window_size=args.window_size)
     db = SpectreDB(db_path=args.db)
+
+    # Start API server if enabled
+    if args.api:
+        print(f"[*] Starting REST API server on port {args.api_port}...")
+        api_app = create_api(db)
+        
+        # Suppress uvicorn access logs so it doesn't spam the console
+        import logging
+        log_config = uvicorn.config.LOGGING_CONFIG
+        log_config["loggers"]["uvicorn.access"]["handlers"] = []
+        
+        api_thread = threading.Thread(
+            target=uvicorn.run,
+            args=(api_app,),
+            kwargs={"host": "0.0.0.0", "port": args.api_port, "log_config": log_config, "log_level": "error"},
+            daemon=True
+        )
+        api_thread.start()
 
     print(f"[*] Initial host process snapshot captured.")
     print(f"[*] Active host intrusion and resource monitoring running. Press Ctrl+C to stop.\n" + "="*60)
@@ -219,7 +251,7 @@ def main():
 
     except KeyboardInterrupt:
         db.close()
-        print("\n[*] Stopping Spectre V6 HIDS.")
+        print("\n[*] Stopping Spectre V7 HIDS.")
         sys.exit(0)
 
 if __name__ == "__main__":
