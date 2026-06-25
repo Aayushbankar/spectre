@@ -8,6 +8,7 @@ from alerts import Alert, AlertLogger, format_process_resource_tree
 from graph import ProcessResourceGraph
 from storage import SpectreDB
 from api import create_api
+from scanner import YaraScanner
 import threading
 import uvicorn
 
@@ -24,7 +25,7 @@ def print_raw_process_tree(chain):
     sys.stdout.flush()
 
 def main():
-    parser = argparse.ArgumentParser(description="Spectre V7: REST API")
+    parser = argparse.ArgumentParser(description="Spectre V9: YARA Integration")
     parser.add_argument(
         "--interval", 
         type=float, 
@@ -77,9 +78,15 @@ def main():
         default="spectre.db",
         help="Path to SQLite database for event persistence (default: spectre.db)"
     )
+    parser.add_argument(
+        "--yara-rules",
+        type=str,
+        default="yara_rules",
+        help="Directory containing YARA rule files (.yar/.yara) (default: yara_rules)"
+    )
     args = parser.parse_args()
 
-    print(f"[*] Starting Spectre V7 HIDS...")
+    print(f"[*] Starting Spectre V9 HIDS...")
     print(f"[*] Alert Log file: {args.log_file}")
     print(f"[*] Database: {args.db}")
     print(f"[*] Polling interval: {args.interval}s")
@@ -100,6 +107,7 @@ def main():
     alert_logger = AlertLogger(log_file=args.log_file)
     graph = ProcessResourceGraph(window_size=args.window_size)
     db = SpectreDB(db_path=args.db)
+    yara_scanner = YaraScanner(rule_dir=args.yara_rules)
 
     # Start API server if enabled
     if args.api:
@@ -165,6 +173,18 @@ def main():
                     session_info["triggered_rules"].add(sig)
                     session_info["score"] += rule.score
                     
+                    # Scan files accessed by the offending process
+                    yara_hits = []
+                    for f in proc.get("files", []):
+                        hits = yara_scanner.scan_file(f["path"])
+                        if hits:
+                            h = yara_scanner.get_file_hash(f["path"])
+                            yara_hits.append(f"{f['path']} matched YARA {hits} (SHA256: {h})")
+
+                    if yara_hits:
+                        detail += " | " + " | ".join(yara_hits)
+                        session_info["score"] += 10 # Bump score for YARA matches
+
                     mitre_str = rule.get_mitre_str()
                     event_data = {
                         "rule_name": rule.name,
@@ -251,7 +271,7 @@ def main():
 
     except KeyboardInterrupt:
         db.close()
-        print("\n[*] Stopping Spectre V7 HIDS.")
+        print("\n[*] Stopping Spectre V9 HIDS.")
         sys.exit(0)
 
 if __name__ == "__main__":
