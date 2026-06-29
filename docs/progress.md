@@ -16,7 +16,7 @@ This document tracks the implementation progress of Project Spectre through the 
 | **V7** | REST API | **Completed** | 2026-06-25 | FastAPI endpoints for querying events, alerts, and chains. |
 | **V8** | Dashboard | **Completed** | 2026-06-25 | Static HTML, CSS (glassmorphism), and JS polling interface. |
 | **V9** | YARA Integration | **Completed** | 2026-06-25 | Hash lookup and string signature file scans. |
-| **V10**| Containment | *Not Started* | - | Tree killing, process quarantining, SIGTERM/SIGSTOP actions. |
+| **V10**| Containment | **Completed** | 2026-06-29 | Tree killing, process quarantining, SIGTERM/SIGSTOP actions. |
 | **V11**| Attack Replay | *Not Started* | - | Atomic Red Team simulation runner. |
 | **V12**| Telemetry Upgrades | *Not Started* | - | eBPF, auditd, and procfs event sourcing. |
 | **V13**| Machine Learning | *Not Started* | - | Isolation Forest / One-class SVM anomaly detection. |

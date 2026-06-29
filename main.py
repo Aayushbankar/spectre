@@ -9,6 +9,7 @@ from graph import ProcessResourceGraph
 from storage import SpectreDB
 from api import create_api
 from scanner import YaraScanner
+from mitigation import Container
 import threading
 import uvicorn
 
@@ -25,7 +26,7 @@ def print_raw_process_tree(chain):
     sys.stdout.flush()
 
 def main():
-    parser = argparse.ArgumentParser(description="Spectre V9: YARA Integration")
+    parser = argparse.ArgumentParser(description="Spectre V10: Active Containment")
     parser.add_argument(
         "--interval", 
         type=float, 
@@ -84,9 +85,15 @@ def main():
         default="yara_rules",
         help="Directory containing YARA rule files (.yar/.yara) (default: yara_rules)"
     )
+    parser.add_argument(
+        "--contain",
+        choices=["none", "stop", "kill"],
+        default="none",
+        help="Action to take when a session breaches the threshold (default: none)"
+    )
     args = parser.parse_args()
 
-    print(f"[*] Starting Spectre V9 HIDS...")
+    print(f"[*] Starting Spectre V10 HIDS...")
     print(f"[*] Alert Log file: {args.log_file}")
     print(f"[*] Database: {args.db}")
     print(f"[*] Polling interval: {args.interval}s")
@@ -108,6 +115,7 @@ def main():
     graph = ProcessResourceGraph(window_size=args.window_size)
     db = SpectreDB(db_path=args.db)
     yara_scanner = YaraScanner(rule_dir=args.yara_rules)
+    container = Container(action=args.contain)
 
     # Start API server if enabled
     if args.api:
@@ -261,6 +269,10 @@ def main():
                         chain=chain,
                         explanation=explanation
                     )
+                    
+                    # Apply Containment
+                    if args.contain != "none":
+                        container.mitigate(session_leader["pid"], session_leader["name"])
 
             # In verbose mode, print raw tree and graph stats
             if args.verbose:
@@ -271,7 +283,7 @@ def main():
 
     except KeyboardInterrupt:
         db.close()
-        print("\n[*] Stopping Spectre V9 HIDS.")
+        print("\n[*] Stopping Spectre V10 HIDS.")
         sys.exit(0)
 
 if __name__ == "__main__":
