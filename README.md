@@ -1,92 +1,227 @@
-# Project Spectre
-
-Project Spectre is a lightweight, local-first **behavioral Host Intrusion Detection System (HIDS)**. Instead of relying on static file signatures, Spectre models the grammar of host processes and resource actions to detect anomalous execution chains and behaviors.
-
-Rather than asking:
-> *"Is this file known?"*
-
-Spectre asks:
-> *"Does this sequence of actions make sense on this machine?"*
+<div align="center">
+  <h1>Project Spectre</h1>
+  <p><b>A Behavioral Host Intrusion Detection System (HIDS)</b></p>
+  
+  <p>
+    <a href="https://python.org"><img src="https://img.shields.io/badge/Python-3.8+-blue.svg" alt="Python 3.8+"></a>
+    <a href="https://github.com/Aayushbankar/spectre/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
+    <a href="https://attack.mitre.org/"><img src="https://img.shields.io/badge/MITRE-ATT%26CK-red.svg" alt="MITRE ATT&CK"></a>
+    <a href="#"><img src="https://img.shields.io/badge/Build-Passing-brightgreen.svg" alt="Build Status"></a>
+  </p>
+  
+  <p><i>Instead of asking "Is this file known?", Spectre asks "Does this sequence of actions make sense?"</i></p>
+</div>
 
 ---
 
-## 🚀 Quick Start (V4 Detection Engine)
+## Table of Contents
+- [Overview](#overview)
+- [Why Spectre?](#why-spectre)
+- [Architecture](#architecture)
+- [Key Features](#key-features)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+- [Usage & CLI Reference](#usage--cli-reference)
+- [Configuration (Writing Rules)](#configuration-writing-rules)
+- [Testing & Verification](#testing--verification)
+- [Documentation & Roadmap](#documentation--roadmap)
+- [Acknowledgments & External Links](#acknowledgments--external-links)
 
-Spectre is currently on **V4 (Detection Engine)**. This version introduces dynamic JSON rules loading, process-resource rule matching, and weighted threat score accumulation across process session trees.
+---
+
+## Overview
+
+**Project Spectre** is a lightweight, local-first **behavioral Host Intrusion Detection System (HIDS)**. Rather than relying heavily on static file signatures, Spectre models the grammar of host processes and resource actions to detect anomalous execution chains and behaviors. 
+
+Currently on **V10 (Active Containment)**, Spectre tracks process lineages, monitors file and network I/O, evaluates threats in real-time, provides MITRE ATT&CK context, scans payloads via YARA, and can actively quarantine or terminate malicious process trees.
+
+---
+
+## Why Spectre?
+
+Traditional endpoint protection platforms (EPP) and antiviruses (AV) often rely heavily on static signatures—checking file hashes against a known database of malware. This approach completely fails against **zero-day threats**, **fileless malware**, and **"living off the land"** techniques where attackers abuse legitimate system binaries (like `powershell`, `curl`, or `bash`).
+
+Spectre shifts the security paradigm from *static characteristics* to *dynamic relationships*. By continuously tracking process ancestry (who spawned who) and correlating it with resource access (who touched which file, who opened which socket), Spectre identifies malicious **intent** rather than malicious **files**.
+
+**Example Attack Chain Detected:**
+```text
+nginx (Web Server)
+└── bash (Interactive Shell)
+    ├── curl (Downloads payload)
+    │   └── [WRITE] -> /tmp/malware.sh
+    └── sh (Executes payload)
+        └── [CONNECT] -> 192.168.1.50:4444 (C2 Server)
+```
+
+---
+
+## Architecture
+
+The system operates across a 4-stage pipeline:
+
+```text
++---------------------+      +---------------------+      +---------------------+
+|                     |      |                     |      |                     |
+|  1. OS Telemetry    |----->|  2. Graph Builder   |----->| 3. Detection Engine |
+|  (psutil, /proc)    |      |  (NetworkX Memory)  |      |  (Rules & Scoring)  |
+|                     |      |                     |      |                     |
++---------------------+      +---------------------+      +---------------------+
+                                                                     |
+                                                                     v
+                                                          +---------------------+
+                                                          |                     |
+                                                          |  4. Action & Alert  |
+                                                          | (Containment, REST) |
+                                                          |                     |
+                                                          +---------------------+
+```
+
+1. **Telemetry Sensing (`psutil`)**: Continuously polls the OS for process spawns, file descriptors, and network sockets.
+2. **Graph Construction (`NetworkX`)**: Events are normalized into a sliding-window, directed process-resource graph, automatically pruning stale events to prevent memory leaks.
+3. **Detection Engine**: The active graph is evaluated against JSON-configurable behavioral rules. Threat scores accumulate along process lineage chains.
+4. **Action & Visualization (`FastAPI` & `Next.js`)**: Once a threshold is breached, Spectre fires an alert, maps it to MITRE ATT&CK, runs a deep-scan via YARA, and can actively freeze/kill the process tree.
+
+---
+
+## Key Features
+
+- **Process Ancestry Tracking**: Reconstructs complete execution lineages, handling PID recycling and short-lived processes safely.
+- **Resource Monitoring**: Tracks I/O operations including `READ`/`WRITE` for files, and `CONNECT`/`LISTEN` for sockets.
+- **Behavioral Detection Engine**: Scores chains of events dynamically using JSON-configurable rules.
+- **Threat Enrichment**: 
+  - **MITRE ATT&CK**: Alerts are mapped automatically to ATT&CK tactics (e.g., *T1059 - Command and Scripting Interpreter*).
+  - **YARA Integration**: Scans suspicious files on-the-fly using the `yara-python` engine.
+- **Active Containment**: Configurable actions (`--contain stop` or `kill`) to instantly freeze or terminate entire threat process trees.
+- **Persistence & API**: Events and alerts are stored in a local SQLite database and exposed via a FastAPI REST interface.
+- **Live Dashboard**: Real-time web dashboard powered by Next.js to monitor the graph, alerts, and system telemetry.
+
+---
+
+## Getting Started
 
 ### Prerequisites
-* Python 3.8+
-* Linux operating system
 
-### Installation & Run
+- Python 3.8 or newer
+- Linux Operating System (for accurate `/proc` mapping and `psutil` compatibility)
+- Dependencies: `psutil`, `networkx`, `fastapi`, `yara-python`, `uvicorn`
 
-1. **Clone & Navigate to directory:**
+### Installation
+
+1. **Clone the repository:**
    ```bash
+   git clone https://github.com/Aayushbankar/spectre.git
    cd spectre
    ```
 
-2. **Create a virtual environment & install dependencies:**
+2. **Set up virtual environment:**
    ```bash
    python3 -m venv venv
    source venv/bin/activate
    pip install -r requirements.txt
    ```
 
+---
+
+## Usage & CLI Reference
+
+Spectre provides a highly configurable Command Line Interface (CLI) for tuning the engine's sensitivity and enabling specific modules.
+
+### Basic Usage
+
 > [!IMPORTANT]
-> **Quiet vs. Verbose Output Modes**
-> * **Quiet Mode (Default)**: Running `python main.py` runs quietly. It will **only** print to the terminal when a security alert is triggered (e.g., shell spawning downloader tools like `curl`).
-> * **Verbose Mode**: Running `python main.py --verbose` (or `-v`) prints **all** process spawns, file reads/writes, and network connections, along with the NetworkX graph metrics, in the terminal in real time as they occur.
+> **Quiet Mode vs. Verbose Mode**
+> By default, `python main.py` runs in **Quiet Mode**, meaning it will only log to the terminal when a critical alert threshold is breached. To see the graph updating in real-time, use the `--verbose` (`-v`) flag.
 
-3. **Run the HIDS detector (Quiet Mode - prints security alerts only):**
-   ```bash
-   python main.py
-   ```
+**Run with Active Containment & REST API:**
+```bash
+python main.py --verbose --contain kill --api --yara-rules yara_rules
+```
 
-4. **Run in Verbose Mode with Custom Rules & Threshold:**
-   ```bash
-   python main.py --verbose --rules rules.json --threshold 20 --interval 0.1
-   ```
+### Full CLI Options
+
+| Argument | Description | Default |
+| :--- | :--- | :--- |
+| `--interval` | Polling interval in seconds (controls telemetry speed). | `0.5` |
+| `--log-file` | Path to the security alerts output log file. | `spectre_alerts.log` |
+| `--verbose`, `-v` | Enable verbose mode to print all process/resource events. | `False` |
+| `--window-size`, `-w`| Sliding time window in seconds for event expiration. | `60.0` |
+| `--rules`, `-r` | Path to the behavioral rules JSON configuration file. | `rules.json` |
+| `--threshold`, `-t` | Threat score threshold for triggering high-severity alerts. | `15` |
+| `--api` | Enable the FastAPI REST API and Dashboard server. | `Disabled` |
+| `--api-port` | Port for the REST API server. | `8000` |
+| `--db` | Path to SQLite database for event persistence. | `spectre.db` |
+| `--yara-rules` | Directory containing YARA rule files (`.yar`/`.yara`). | `yara_rules` |
+| `--contain` | Mitigation action to take on a breach (`none`, `stop`, `kill`). | `none` |
 
 ---
 
-## 🧪 E2E Verification Tests
+## Configuration (Writing Rules)
 
-V4 includes an automated E2E verification test suite to simulate and assert threat escalation behaviors under `tests/v4/`.
+Spectre uses a decoupled `rules.json` file for behavioral detection. You can write your own custom rules to monitor specific chains in your environment.
 
-Run the test suite directly:
+**Example: Detecting a web server spawning a shell**
+```json
+[
+  {
+    "name": "Web Server Shell Spawn",
+    "parent": "nginx|apache2",
+    "child": "bash|sh|dash",
+    "resource": null,
+    "score": 20,
+    "description": "A web server process spawned a shell interpreter, indicating a potential web shell.",
+    "mitre_id": "T1505.003"
+  }
+]
+```
+*If an `nginx` process spawns `bash`, this rule assigns a high threat score of 20, immediately breaching the default threshold of 15 and triggering an alert.*
+
+---
+
+## Testing & Verification
+
+Spectre includes an automated E2E verification test suite to simulate and assert threat escalation behaviors (like spawning web shells, executing curl, and touching sensitive files).
+
+Run the V10 testing suite:
 ```bash
-python3 tests/v4/run_test.py
+python3 tests/v10/run_test.py
 ```
 
 ---
 
-## 📂 Project Structure & Documentation
+## Documentation & Roadmap
 
-* **[docs/design_doc.md](docs/design_doc.md)**: The master design document listing the vision, principles, core entity relations, and the 17-stage incremental SDLC roadmap.
-* **[docs/progress.md](docs/progress.md)**: The current progress tracker of the system's increments.
-* **[docs/v0_report.md](docs/v0_report.md)**: Technical overview of the V0 Process Monitor implementation.
-* **[docs/v1_report.md](docs/v1_report.md)**: Technical overview of the V1 Rule-Based Detector and explanation engine.
-* **[docs/v2_report.md](docs/v2_report.md)**: Technical overview of the V2 Resource Tracking architecture.
-* **[docs/v3_report.md](docs/v3_report.md)**: Technical overview of the V3 sliding window graph model and pruning mechanics.
-* **[docs/v4_report.md](docs/v4_report.md)**: Technical overview of the V4 Detection Engine and E2E test suite.
-* **[main.py](main.py)**: Orchestration script running the detector.
-* **[rules.json](rules.json)**: JSON configuration containing all behavioral rules.
-* **[sensor/](sensor/)**: Telemetry collection wrapper extracting process ancestry and active resource state.
-* **[graph/](graph/)**: NetworkX sliding window graph implementation with event-pruning queues.
-* **[rules/](rules/)**: Rules dataclass and preset list of suspicious behavior profiles.
-* **[detectors/](detectors/)**: Evaluates active process chains against the behavioral rules.
-* **[alerts/](alerts/)**: Explanation builder, console tree printer, and logging handlers.
-* **[tests/](tests/)**: Version-specific automated test suites and simulation triggers.
+Detailed architectural notes and version progression can be found in the `docs/` directory:
+
+* **[Master Design Document](docs/design_doc.md)**: Vision, entity relations, and the 17-stage SDLC roadmap.
+* **[Progress Tracker](docs/progress.md)**: Current completion status of the project.
+* **[GTU Internship Submission](docs/gtu_submission_details.md)**: Details for project submission.
+
+**Incremental SDLC Roadmap (Current Status):**
+- [x] **V0-V3**: Process Monitor, Rule Engine, Resource Tracking, Graph Memory.
+- [x] **V4-V5**: Detection Engine, MITRE ATT&CK Mapping.
+- [x] **V6-V8**: SQLite Persistence, REST API, Live Dashboard.
+- [x] **V9**: YARA Engine Integration.
+- [x] **V10**: Active Containment (SIGSTOP/SIGKILL).
+- [ ] **V11**: Attack Replay Framework (Atomic Red Team).
+- [ ] **V12**: OS Telemetry Upgrades (eBPF, auditd).
+- [ ] **V13-V17**: Machine Learning, Graph Embeddings, Multi-host Agent.
+
+*(Individual version reports v0-v10 are also available in the docs folder).*
 
 ---
 
-## 🛠️ Incremental SDLC Roadmap
+## Acknowledgments & External Links
 
-Spectre is evolving step-by-step:
-* **V0**: Process Monitor PoC.
-* **V1**: Rule-based behavior, scoring chains, and generating human-explainable alerts.
-* **V2**: Resource tracing (files, sockets, read/write/connect/listen events).
-* **V3**: Sliding window event expiration using NetworkX graphs.
-* **V4 (Current)**: Detection Engine upgrades (dynamic JSON rules, weighted session scoring, custom threat thresholds).
-* **V5 (Next)**: Attack Mapping (MITRE ATT&CK integration).
-* *See [progress.md](docs/progress.md) for the full 17-step roadmap.*
+Spectre is built on the shoulders of giants. We heavily rely on the following open-source frameworks and security standards:
+
+- **[psutil](https://github.com/giampaolo/psutil)**: For cross-platform OS-level process and system monitoring.
+- **[NetworkX](https://networkx.org/)**: For sliding-window directed graph processing and ancestry modeling.
+- **[FastAPI](https://fastapi.tiangolo.com/)**: For exposing the high-performance telemetry API.
+- **[YARA](https://virustotal.github.io/yara/)**: The pattern matching swiss knife for malware researchers.
+- **[MITRE ATT&CK®](https://attack.mitre.org/)**: The globally-accessible knowledge base of adversary tactics and techniques.
+
+---
+<div align="center">
+  <i>Engineered for deep contextual visibility and zero-day resilience.</i>
+</div>
