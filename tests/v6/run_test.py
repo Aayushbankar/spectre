@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-import subprocess
-import time
 import os
-import sys
 import sqlite3
+import subprocess
+import sys
+import time
+
 
 def main():
     print("[*] Running V6 E2E Test Suite...")
@@ -16,9 +17,20 @@ def main():
     # 1. Start Spectre monitor
     print("[*] Spawning Spectre monitor process...")
     spectre_proc = subprocess.Popen(
-        [sys.executable, "main.py", "--interval", "0.1", "--log-file", test_log,
-         "--db", test_db, "--threshold", "20"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        [
+            sys.executable,
+            "main.py",
+            "--interval",
+            "0.1",
+            "--log-file",
+            test_log,
+            "--db",
+            test_db,
+            "--threshold",
+            "20",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     time.sleep(2)
 
@@ -26,7 +38,8 @@ def main():
     print("[*] Spawning trigger simulation...")
     sim_proc = subprocess.Popen(
         [sys.executable, "tests/v5/trigger_simulation.py"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     sim_stdout, _ = sim_proc.communicate(timeout=15)
     print(sim_stdout.decode())
@@ -89,6 +102,7 @@ def main():
     else:
         print("\n[FAIL] V6 E2E Test Suite Failed.")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

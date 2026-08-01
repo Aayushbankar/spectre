@@ -1,16 +1,17 @@
 import socket
-import time
 import sys
+import time
+
 
 def main():
     print("[*] Starting V4 validation trigger simulation...")
     sys.stdout.flush()
-    
+
     # 1. Read /etc/hosts (Expected rule match: python_hosts_read, Score: 12)
     print("[*] Simulating Event 1: Reading /etc/hosts...")
     sys.stdout.flush()
     try:
-        f = open("/etc/hosts", "r")
+        f = open("/etc/hosts")
         f.read()
         time.sleep(2)
         f.close()
@@ -33,6 +34,7 @@ def main():
 
     print("[*] Simulation complete.")
     sys.stdout.flush()
+
 
 if __name__ == "__main__":
     main()

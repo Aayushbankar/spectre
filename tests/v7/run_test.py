@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-import subprocess
-import time
-import os
-import sys
-import urllib.request
 import json
+import os
+import subprocess
+import sys
+import time
+import urllib.request
+
 
 def main():
     print("[*] Running V7 E2E Test Suite...")
@@ -17,11 +18,23 @@ def main():
     # 1. Start Spectre monitor with --api
     print("[*] Spawning Spectre monitor process with REST API...")
     spectre_proc = subprocess.Popen(
-        [sys.executable, "main.py", "--interval", "0.1", "--log-file", test_log,
-         "--db", test_db, "--api", "--api-port", "8001"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        [
+            sys.executable,
+            "main.py",
+            "--interval",
+            "0.1",
+            "--log-file",
+            test_log,
+            "--db",
+            test_db,
+            "--api",
+            "--api-port",
+            "8001",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
-    time.sleep(3) # Wait for uvicorn to start
+    time.sleep(3)  # Wait for uvicorn to start
 
     # 2. Check health endpoint
     print("[*] Checking API /api/health...")
@@ -29,7 +42,7 @@ def main():
         req = urllib.request.urlopen("http://localhost:8001/api/health")
         health_data = json.loads(req.read().decode())
         print(f"    Health: {health_data['status']} (v{health_data['version']})")
-        api_healthy = (health_data['status'] == "ok")
+        api_healthy = health_data["status"] == "ok"
     except Exception as e:
         print(f"[FAIL] Failed to contact health API: {e}")
         api_healthy = False
@@ -38,7 +51,8 @@ def main():
     print("[*] Spawning trigger simulation to generate events...")
     sim_proc = subprocess.Popen(
         [sys.executable, "tests/v5/trigger_simulation.py"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     sim_proc.communicate(timeout=15)
     time.sleep(3)
@@ -50,12 +64,12 @@ def main():
         events_data = json.loads(req.read().decode())
         has_events = events_data["count"] > 0
         print(f"    Events count: {events_data['count']}")
-        
+
         req = urllib.request.urlopen("http://localhost:8001/api/stats")
         stats_data = json.loads(req.read().decode())
         stats_valid = stats_data["total_events"] > 0
         print(f"    Stats: {stats_data}")
-        
+
     except Exception as e:
         print(f"[FAIL] Failed to fetch data from API: {e}")
         has_events = False
@@ -89,6 +103,7 @@ def main():
     else:
         print("\n[FAIL] V7 E2E Test Suite Failed.")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

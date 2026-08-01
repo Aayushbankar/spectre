@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-import subprocess
-import time
 import os
+import subprocess
 import sys
+import time
+
 import psutil
+
 
 def main():
     print("[*] Running V10 E2E Test Suite...")
@@ -17,9 +19,22 @@ def main():
     # Threshold 10, so a single /etc/hosts read (Score 15) triggers an alert + kill
     print("[*] Spawning Spectre monitor process with Active Containment (kill)...")
     spectre_proc = subprocess.Popen(
-        [sys.executable, "main.py", "--interval", "0.1", "--log-file", test_log,
-         "--db", test_db, "--contain", "kill", "--threshold", "10"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        [
+            sys.executable,
+            "main.py",
+            "--interval",
+            "0.1",
+            "--log-file",
+            test_log,
+            "--db",
+            test_db,
+            "--contain",
+            "kill",
+            "--threshold",
+            "10",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     time.sleep(2)
 
@@ -27,10 +42,11 @@ def main():
     print("[*] Spawning trigger simulation...")
     sim_proc = subprocess.Popen(
         [sys.executable, "tests/v10/trigger_simulation.py"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     sim_pid = sim_proc.pid
-    
+
     # Wait for sensor to detect and contain
     time.sleep(4)
 
@@ -60,10 +76,12 @@ def main():
     print()
     print("=" * 40)
     print("V10 VERIFICATION REPORT:")
-    print(f"  - Active Containment (Process Killed): {'[PASS]' if not is_running or status == 'zombie' else '[FAIL]'}")
+    print(
+        f"  - Active Containment (Process Killed): {'[PASS]' if not is_running or status == 'zombie' else '[FAIL]'}",
+    )
     print("=" * 40)
 
-    if not is_running or status == 'zombie':
+    if not is_running or status == "zombie":
         print("\n[SUCCESS] V10 E2E Test Suite Passed successfully.")
         for f in [test_log, test_db]:
             if os.path.exists(f):
@@ -72,6 +90,7 @@ def main():
     else:
         print("\n[FAIL] V10 E2E Test Suite Failed.")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

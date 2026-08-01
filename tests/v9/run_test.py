@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-import subprocess
-import time
 import os
+import subprocess
 import sys
+import time
+
 
 def main():
     print("[*] Running V9 E2E Test Suite...")
@@ -15,9 +16,22 @@ def main():
     # 1. Start Spectre monitor with --yara-rules
     print("[*] Spawning Spectre monitor process with YARA scanning...")
     spectre_proc = subprocess.Popen(
-        [sys.executable, "main.py", "--interval", "0.1", "--log-file", test_log,
-         "--db", test_db, "--yara-rules", "yara_rules", "--threshold", "20"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        [
+            sys.executable,
+            "main.py",
+            "--interval",
+            "0.1",
+            "--log-file",
+            test_log,
+            "--db",
+            test_db,
+            "--yara-rules",
+            "yara_rules",
+            "--threshold",
+            "20",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     time.sleep(2)
 
@@ -25,7 +39,8 @@ def main():
     print("[*] Spawning trigger simulation...")
     sim_proc = subprocess.Popen(
         [sys.executable, "tests/v9/trigger_simulation.py"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     sim_stdout, _ = sim_proc.communicate(timeout=15)
     print(sim_stdout.decode())
@@ -45,7 +60,7 @@ def main():
         print("[FAIL] Log file not created!")
         sys.exit(1)
 
-    with open(test_log, "r") as f:
+    with open(test_log) as f:
         log_content = f.read()
 
     has_yara_match = "matched YARA ['SuspiciousShellScript']" in log_content
@@ -75,6 +90,7 @@ def main():
     else:
         print("\n[FAIL] V9 E2E Test Suite Failed.")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
