@@ -172,93 +172,133 @@ class ProcessSensor:
 
     def start_monitoring(self) -> Generator[list[dict], None, None]:
         """
-        Runs the monitoring loop, yielding the ancestor chain for each new process
-        or when a monitored process accesses a new resource (file or socket).
+        Runs the monitoring loop using Netlink (if available) or falling back to polling.
         """
-        while True:
-            time.sleep(self.interval)
+        from .netlink import NetlinkProcessMonitor
+        import queue
+        import logging
+        
+        event_queue = queue.Queue()
+        def _on_netlink_event(event_type, pid, ppid):
+            event_queue.put((event_type, pid))
+            
+        netlink_monitor = NetlinkProcessMonitor(callback=_on_netlink_event)
+        use_netlink = netlink_monitor.start()
+        
+        try:
+            while True:
+                current_processes: dict[int, float] = {}
+                new_processes_detected: list[tuple[int, float]] = []
 
-            current_processes: dict[int, float] = {}
-            new_processes_detected: list[tuple[int, float]] = []
+                if use_netlink:
+                    try:
+                        ev_type, pid = event_queue.get(timeout=self.interval)
+                        events = [(ev_type, pid)]
+                        while not event_queue.empty():
+                            events.append(event_queue.get())
+                            
+                        for ev_type, pid in events:
+                            if ev_type in ("EXEC", "FORK"):
+                                try:
+                                    proc = psutil.Process(pid)
+                                    ctime = proc.create_time()
+                                    new_processes_detected.append((pid, ctime))
+                                    self.known_processes[pid] = ctime
+                                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                    pass
+                            elif ev_type == "EXIT":
+                                if pid in self.known_processes:
+                                    del self.known_processes[pid]
+                    except queue.Empty:
+                        pass
+                        
+                    # For resource polling, check active monitored processes
+                    for pid, ctime in list(self.monitored_processes):
+                        try:
+                            proc = psutil.Process(pid)
+                            if proc.create_time() == ctime:
+                                current_processes[pid] = ctime
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                else:
+                    # Fallback Polling Mode
+                    time.sleep(self.interval)
+                    for proc in psutil.process_iter():
+                        try:
+                            pid = proc.pid
+                            ctime = proc.create_time()
+                            current_processes[pid] = ctime
 
-            # 1. Capture current running processes
-            for proc in psutil.process_iter():
-                try:
-                    pid = proc.pid
-                    ctime = proc.create_time()
-                    current_processes[pid] = ctime
+                            if pid not in self.known_processes or self.known_processes[pid] != ctime:
+                                new_processes_detected.append((pid, ctime))
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            continue
 
-                    if pid not in self.known_processes or self.known_processes[pid] != ctime:
-                        new_processes_detected.append((pid, ctime))
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
-
-            # 2. Process spawns
-            for pid, ctime in new_processes_detected:
-                self.known_processes[pid] = ctime
-                try:
-                    proc = psutil.Process(pid)
-                    if self._is_ignored_process(proc):
-                        continue
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
-
-                chain = self._trace_ancestry(pid)
-                if chain:
-                    # Monitor resources ONLY for the newly spawned process
-                    self.monitored_processes.add((pid, ctime))
-                    yield chain
-
-            # 3. Update resources for all monitored processes
-            updated_processes = []
-            dead_monitored = []
-
-            for key in list(self.monitored_processes):
-                pid, ctime = key
-                try:
-                    # Check if process is still running and is the same execution
-                    if pid in current_processes and current_processes[pid] == ctime:
+                # 2. Process spawns
+                for pid, ctime in new_processes_detected:
+                    self.known_processes[pid] = ctime
+                    try:
                         proc = psutil.Process(pid)
+                        if self._is_ignored_process(proc):
+                            continue
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
 
-                        current_files = self._get_process_files(proc)
-                        current_conns = self._get_process_connections(proc)
+                    chain = self._trace_ancestry(pid)
+                    if chain:
+                        self.monitored_processes.add((pid, ctime))
+                        yield chain
 
-                        if key not in self.process_resources:
-                            self.process_resources[key] = {"files": [], "connections": []}
+                # 3. Update resources for all monitored processes
+                updated_processes = []
+                dead_monitored = []
 
-                        entry = self.process_resources[key]
-                        existing_files = {(f["path"], f["event"]) for f in entry["files"]}
-                        existing_conns = {(c["raddr"], c["event"]) for c in entry["connections"]}
+                for key in list(self.monitored_processes):
+                    pid, ctime = key
+                    try:
+                        if pid in current_processes and current_processes[pid] == ctime:
+                            proc = psutil.Process(pid)
 
-                        updated = False
-                        for f in current_files:
-                            if (f["path"], f["event"]) not in existing_files:
-                                entry["files"].append(f)
-                                updated = True
+                            current_files = self._get_process_files(proc)
+                            current_conns = self._get_process_connections(proc)
 
-                        for c in current_conns:
-                            if (c["raddr"], c["event"]) not in existing_conns:
-                                entry["connections"].append(c)
-                                updated = True
+                            if key not in self.process_resources:
+                                self.process_resources[key] = {"files": [], "connections": []}
 
-                        if updated:
-                            updated_processes.append(key)
-                    else:
+                            entry = self.process_resources[key]
+                            existing_files = {(f["path"], f["event"]) for f in entry["files"]}
+                            existing_conns = {(c["raddr"], c["event"]) for c in entry["connections"]}
+
+                            updated = False
+                            for f in current_files:
+                                if (f["path"], f["event"]) not in existing_files:
+                                    entry["files"].append(f)
+                                    updated = True
+
+                            for c in current_conns:
+                                if (c["raddr"], c["event"]) not in existing_conns:
+                                    entry["connections"].append(c)
+                                    updated = True
+
+                            if updated:
+                                updated_processes.append(key)
+                        else:
+                            dead_monitored.append(key)
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
                         dead_monitored.append(key)
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    dead_monitored.append(key)
 
-            # Clean up dead monitored processes from active polling set
-            for key in dead_monitored:
-                self.monitored_processes.discard(key)
+                for key in dead_monitored:
+                    self.monitored_processes.discard(key)
 
-            # Yield updated chains for processes that had resource updates
-            for pid, ctime in updated_processes:
-                chain = self._trace_ancestry(pid)
-                if chain:
-                    yield chain
+                for pid, ctime in updated_processes:
+                    chain = self._trace_ancestry(pid)
+                    if chain:
+                        yield chain
 
-            # 4. Clean up exited known processes
-            exited_pids = [pid for pid in self.known_processes if pid not in current_processes]
-            for pid in exited_pids:
-                del self.known_processes[pid]
+                # 4. Clean up exited known processes (only in polling mode since netlink handles EXIT)
+                if not use_netlink:
+                    exited_pids = [pid for pid in self.known_processes if pid not in current_processes]
+                    for pid in exited_pids:
+                        del self.known_processes[pid]
+        finally:
+            netlink_monitor.stop()
