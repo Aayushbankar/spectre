@@ -1,16 +1,13 @@
 name: Rule Testing
 
 on:
-  push:
-    branches: [main, develop]
-    paths:
-      - 'rules/**'
-      - 'tests/**'
-  pull_request:
-    branches: [main, develop]
-    paths:
-      - 'rules/**'
-      - 'tests/**'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch to run rule tests on'
+        required: false
+        default: 'develop'
+        type: string
 
 jobs:
   test-rules:

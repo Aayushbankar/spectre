@@ -1,10 +1,13 @@
 name: CI
 
 on:
-  push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch to run CI on'
+        required: false
+        default: 'develop'
+        type: string
 
 env:
   PYTHON_VERSION: "3.12"
