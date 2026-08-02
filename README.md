@@ -36,7 +36,7 @@
 
 **Project Spectre** is a lightweight, local-first **behavioral Host Intrusion Detection System (HIDS)**. Rather than relying heavily on static file signatures, Spectre models the grammar of host processes and resource actions to detect anomalous execution chains and behaviors. 
 
-Currently on **V10 (Active Containment)** with **Phase 1 (Detection Engineering Platform)** features, Spectre tracks process lineages, monitors file and network I/O, evaluates threats in real-time, provides MITRE ATT&CK context, scans payloads via YARA, and can actively quarantine or terminate malicious process trees.
+Currently in **v0.2.0 (Alpha PoC)**, Spectre is an experimental proof-of-concept that tracks process lineages, monitors file and network I/O, evaluates threats in real-time, provides MITRE ATT&CK context, scans payloads via YARA, and can actively quarantine malicious process trees.
 
 **New in Phase 1:**
 - **Sigma-native rule format** — Write rules in Sigma YAML, convert to Spectre automatically
@@ -89,7 +89,7 @@ The system operates across a 4-stage pipeline:
 1. **Telemetry Sensing**: Continuously polls the OS for process spawns, file descriptors, and network sockets (psutil) — eBPF sensor in development for zero-gap visibility.
 2. **Graph Construction**: Events are normalized into a sliding-window, directed process-resource graph, automatically pruning stale events to prevent memory leaks.
 3. **Detection Engine**: The active graph is evaluated against JSON/Sigma-configurable behavioral rules. Threat scores accumulate along process lineage chains.
-4. **Action & Visualization**: Once a threshold is breached, Spectre fires an alert, maps it to MITRE ATT&CK, runs a deep-scan via YARA, and can actively freeze/kill the process tree. REST API + Next.js dashboard for real-time monitoring.
+4. **Action & Visualization**: Once a threshold is breached, Spectre fires an alert, maps it to MITRE ATT&CK, runs a deep-scan via YARA, and can actively freeze/kill the process tree. REST API + Lightweight Vanilla JS dashboard for real-time monitoring.
 
 ---
 
@@ -104,7 +104,7 @@ The system operates across a 4-stage pipeline:
   - **YARA Integration**: Scans suspicious files on-the-fly using the `yara-python` engine.
 - **Active Containment**: Configurable actions (`--contain stop` or `kill`) to instantly freeze or terminate entire threat process trees.
 - **Persistence & API**: Events and alerts stored in local SQLite database, exposed via FastAPI REST interface.
-- **Live Dashboard**: Real-time web dashboard for monitoring graph, alerts, and system telemetry.
+- **Live Dashboard**: Lightweight, dependency-free Vanilla HTML/JS web dashboard for monitoring graph, alerts, and system telemetry.
 - **Detection Engineering Platform**: Rule testing, Sigma validation, pack management, CI/CD integration.
 
 ---
@@ -168,7 +168,7 @@ spectre run --verbose --contain kill --api
 
 | Command | Description |
 |---------|-------------|
-| `spectre run` | Run HIDS monitoring with all V10 options |
+| `spectre run` | Run HIDS monitoring |
 | `spectre rules` | List loaded detection rules (table/JSON) |
 | `spectre rule list` | List available rule packs (4 packs, 24 rules) |
 | `spectre rule install <pack>` | Install a rule pack (webshell, privilege_escalation, credential_access, lateral_movement) |
@@ -263,7 +263,7 @@ spectre test rule spectre/rules/packs/webshell/*.yml
 
 Spectre includes an automated E2E verification test suite to simulate and assert threat escalation behaviors.
 
-### Run V10 Test Suite
+### Run E2E Test Suite
 ```bash
 python -m pytest tests/v10/run_test.py
 ```
@@ -301,15 +301,10 @@ Detailed architectural notes and version progression can be found in the `docs/`
 * **[GTU Internship Submission](docs/gtu_submission_details.md)**: Details for project submission.
 
 **Incremental SDLC Roadmap (Current Status):**
-- [x] **V0-V3**: Process Monitor, Rule Engine, Resource Tracking, Graph Memory.
-- [x] **V4-V5**: Detection Engine, MITRE ATT&CK Mapping.
-- [x] **V6-V8**: SQLite Persistence, REST API, Live Dashboard.
-- [x] **V9**: YARA Engine Integration.
-- [x] **V10**: Active Containment (SIGSTOP/SIGKILL).
-- [x] **Phase 1**: Sigma Integration, Rule Packs, Testing CLI, Pack Management.
-- [ ] **V11**: Attack Replay Framework (Atomic Red Team).
-- [ ] **V12**: OS Telemetry Upgrades (eBPF, auditd).
-- [ ] **V13-V17**: Machine Learning, Graph Embeddings, Multi-host Agent.
+- [x] **v0.1**: Process Monitor, Rule Engine, Resource Tracking, Graph Memory.
+- [x] **v0.2**: Active Containment (SIGSTOP), Sigma Integration, Rule Packs, Testing CLI.
+- [ ] **v0.3 (Next)**: Replace `psutil` polling sensor with an event-driven `auditd`/Netlink connector.
+- [ ] **v1.0 (Future)**: Rewrite sensor in Rust/C using eBPF for true zero-gap visibility and production readiness.
 
 ---
 

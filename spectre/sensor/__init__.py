@@ -13,8 +13,12 @@ class ProcessSensor:
     yielding their updated ancestry tree.
     """
 
-    def __init__(self, interval: float = 0.5):
+    def __init__(self, interval: float = 0.5, ignores_config: dict = None):
         self.interval = interval
+        self.ignores_config = ignores_config or {}
+        self.ignored_processes = self.ignores_config.get("processes", [])
+        self.ignored_files = self.ignores_config.get("files", [])
+        self.ignored_dirs = self.ignores_config.get("directories", [])
         self.known_processes: dict[int, float] = {}
         # Maps (pid, create_time) -> {"files": list of dicts, "connections": list of dicts}
         self.process_resources: dict[tuple[int, float], dict] = {}
@@ -24,43 +28,31 @@ class ProcessSensor:
 
     def _is_ignored_process(self, proc: psutil.Process) -> bool:
         """
-        Ignores IDE and agent processes to avoid tracking internal IPC/logs.
+        Ignores processes defined in the ignores configuration to avoid noise.
         """
         try:
             name = proc.name().lower()
             cmdline_str = " ".join(proc.cmdline()).lower()
-            if "antigravity" in name or "antigravity" in cmdline_str:
-                return True
-            if "language_server" in name or "language_server" in cmdline_str:
-                return True
+            for ignored_proc in self.ignored_processes:
+                if ignored_proc.lower() in name or ignored_proc.lower() in cmdline_str:
+                    return True
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
         return False
 
     def _is_ignored_file(self, path: str) -> bool:
         """
-        Filters out shared libraries, pyc files, caches, localization
-        files, and IDE configuration files to prevent console spam.
+        Filters out files and directories defined in the ignores configuration.
         """
         if not path:
             return True
         path_lower = path.lower()
-        if "antigravity" in path_lower or "language_server" in path_lower:
-            return True
-        if path.endswith(".so") or ".so." in path or path.endswith(".pyc") or "__pycache__" in path:
-            return True
+        
+        for ignored_file in self.ignored_files:
+            if ignored_file.lower() in path_lower:
+                return True
 
-        ignored_prefixes = [
-            "/lib/",
-            "/lib64/",
-            "/usr/lib/",
-            "/usr/lib64/",
-            "/usr/share/locale/",
-            "/usr/share/zoneinfo/",
-            "/var/cache/",
-            "/etc/ld.so.cache",
-        ]
-        return any(path.startswith(prefix) for prefix in ignored_prefixes)
+        return any(path.startswith(prefix) for prefix in self.ignored_dirs)
 
     def _get_process_files(self, proc: psutil.Process) -> list[dict]:
         """

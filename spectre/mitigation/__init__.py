@@ -51,6 +51,10 @@ class Container:
                     success = False
 
         elif self.action == "kill":
+            self.logger.warning(
+                "DANGER: Using SIGKILL with a polling sensor is susceptible to PID recycling race conditions. "
+                "Consider using 'stop' instead for safety."
+            )
             self.logger.info(
                 f"CONTAINMENT: Terminating (SIGKILL) process tree for '{proc_name}' (PID: {pid}). Targets: {len(target_procs)}",
             )

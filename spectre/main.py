@@ -2,6 +2,7 @@
 import argparse
 import sys
 import threading
+import yaml
 
 import uvicorn
 
@@ -30,7 +31,7 @@ def print_raw_process_tree(chain):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Spectre V10: Active Containment")
+    parser = argparse.ArgumentParser(description="Spectre v0.2.0: Active Containment")
     parser.add_argument(
         "--interval",
         type=float,
@@ -62,6 +63,13 @@ def main():
         type=str,
         default="rules.json",
         help="Path to the behavioral rules JSON configuration file (default: rules.json)",
+    )
+    parser.add_argument(
+        "--ignores",
+        "-i",
+        type=str,
+        default="ignores.yaml",
+        help="Path to the ignores configuration YAML file (default: ignores.yaml)",
     )
     parser.add_argument(
         "--threshold",
@@ -96,12 +104,12 @@ def main():
     parser.add_argument(
         "--contain",
         choices=["none", "stop", "kill"],
-        default="none",
-        help="Action to take when a session breaches the threshold (default: none)",
+        default="stop",
+        help="Action to take when a session breaches the threshold (default: stop)",
     )
     args = parser.parse_args()
 
-    print("[*] Starting Spectre V10 HIDS...")
+    print("[*] Starting Spectre v0.2.0 HIDS...")
     print(f"[*] Alert Log file: {args.log_file}")
     print(f"[*] Database: {args.db}")
     print(f"[*] Polling interval: {args.interval}s")
@@ -111,13 +119,20 @@ def main():
     # Load rules dynamically
     rules = load_rules_from_file(args.rules)
     print(f"[*] Loaded {len(rules)} behavioral rules from '{args.rules}':")
+    
+    try:
+        with open(args.ignores, "r") as f:
+            ignores_config = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        print(f"[*] Warning: Ignores file '{args.ignores}' not found. Using empty config.")
+        ignores_config = {}
     for rule in rules:
         mitre_str = rule.get_mitre_str()
         mitre_suffix = f" | MITRE: {mitre_str}" if mitre_str else ""
         print(f"    - {rule.name} (Score: {rule.score}){mitre_suffix}")
 
     # Initialize components
-    sensor = ProcessSensor(interval=args.interval)
+    sensor = ProcessSensor(interval=args.interval, ignores_config=ignores_config)
     detector = DetectionEngine(rules=rules)
     alert_logger = AlertLogger(log_file=args.log_file)
     graph = ProcessResourceGraph(window_size=args.window_size)
@@ -302,7 +317,7 @@ def main():
 
     except KeyboardInterrupt:
         db.close()
-        print("\n[*] Stopping Spectre V10 HIDS.")
+        print("\n[*] Stopping Spectre v0.2.0 HIDS.")
         sys.exit(0)
 
 

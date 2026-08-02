@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spectre-hids"
-version = "10.0.0"
+version = "0.2.0-alpha"
 description = "Behavioral Host Intrusion Detection System with Active Containment"
 readme = "README.md"
 license = {text = "MIT"}
