@@ -83,9 +83,8 @@ class DetectionEngine:
                             matched_ancestor = ancestor
                             break
 
-                if rule.descendant_names:
-                    if child["name"] in rule.descendant_names:
-                        descendant_match = True
+                if rule.descendant_names and child["name"] in rule.descendant_names:
+                    descendant_match = True
 
                 if ancestor_match and descendant_match:
                     parent_ctx = matched_ancestor if matched_ancestor else parent

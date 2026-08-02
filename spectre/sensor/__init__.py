@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import time
 from typing import Dict, Generator, List, Optional, Set, Tuple
 
@@ -13,11 +15,11 @@ class ProcessSensor:
 
     def __init__(self, interval: float = 0.5):
         self.interval = interval
-        self.known_processes: Dict[int, float] = {}
+        self.known_processes: dict[int, float] = {}
         # Maps (pid, create_time) -> {"files": list of dicts, "connections": list of dicts}
-        self.process_resources: Dict[Tuple[int, float], Dict] = {}
+        self.process_resources: dict[tuple[int, float], dict] = {}
         # Active processes we are monitoring files and sockets for
-        self.monitored_processes: Set[Tuple[int, float]] = set()
+        self.monitored_processes: set[tuple[int, float]] = set()
         self._initialize_snapshot()
 
     def _is_ignored_process(self, proc: psutil.Process) -> bool:
@@ -58,12 +60,9 @@ class ProcessSensor:
             "/var/cache/",
             "/etc/ld.so.cache",
         ]
-        for prefix in ignored_prefixes:
-            if path.startswith(prefix):
-                return True
-        return False
+        return any(path.startswith(prefix) for prefix in ignored_prefixes)
 
-    def _get_process_files(self, proc: psutil.Process) -> List[Dict]:
+    def _get_process_files(self, proc: psutil.Process) -> list[dict]:
         """
         Retrieves files opened by the process, classifying them as READ or WRITE.
         """
@@ -87,7 +86,7 @@ class ProcessSensor:
             pass
         return files
 
-    def _get_process_connections(self, proc: psutil.Process) -> List[Dict]:
+    def _get_process_connections(self, proc: psutil.Process) -> list[dict]:
         """
         Retrieves active connections or local listeners established by the process.
         """
@@ -119,7 +118,7 @@ class ProcessSensor:
             pass
         return connections
 
-    def _safe_get_process_info(self, proc: psutil.Process) -> Optional[Dict]:
+    def _safe_get_process_info(self, proc: psutil.Process) -> dict | None:
         """
         Safely retrieves key information from a Process instance.
         """
@@ -151,7 +150,7 @@ class ProcessSensor:
             if info:
                 self.known_processes[info["pid"]] = info["create_time"]
 
-    def _trace_ancestry(self, pid: int) -> List[Dict]:
+    def _trace_ancestry(self, pid: int) -> list[dict]:
         """
         Traces the ancestry of a process starting from a PID up to the root.
         """
@@ -179,7 +178,7 @@ class ProcessSensor:
         chain.reverse()
         return chain
 
-    def start_monitoring(self) -> Generator[List[Dict], None, None]:
+    def start_monitoring(self) -> Generator[list[dict], None, None]:
         """
         Runs the monitoring loop, yielding the ancestor chain for each new process
         or when a monitored process accesses a new resource (file or socket).
@@ -187,8 +186,8 @@ class ProcessSensor:
         while True:
             time.sleep(self.interval)
 
-            current_processes: Dict[int, float] = {}
-            new_processes_detected: List[Tuple[int, float]] = []
+            current_processes: dict[int, float] = {}
+            new_processes_detected: list[tuple[int, float]] = []
 
             # 1. Capture current running processes
             for proc in psutil.process_iter():

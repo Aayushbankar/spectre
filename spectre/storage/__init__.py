@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import os
 import sqlite3
@@ -80,7 +82,7 @@ class SpectreDB:
         rule_id: str,
         rule_name: str,
         score: int,
-        chain: List[Dict],
+        chain: list[dict],
         explanation: str,
         mitre: str = "",
     ):
@@ -113,7 +115,7 @@ class SpectreDB:
         )
         self.conn.commit()
 
-    def query_events(self, limit: int = 100, offset: int = 0) -> List[Dict]:
+    def query_events(self, limit: int = 100, offset: int = 0) -> list[dict]:
         """Query events ordered by most recent first."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -122,7 +124,7 @@ class SpectreDB:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def query_alerts(self, limit: int = 100, offset: int = 0) -> List[Dict]:
+    def query_alerts(self, limit: int = 100, offset: int = 0) -> list[dict]:
         """Query alerts ordered by most recent first."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -131,7 +133,7 @@ class SpectreDB:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def query_sessions(self, limit: int = 100, offset: int = 0) -> List[Dict]:
+    def query_sessions(self, limit: int = 100, offset: int = 0) -> list[dict]:
         """Query session scores ordered by highest score first."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -140,7 +142,7 @@ class SpectreDB:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> dict:
         """Get summary statistics."""
         cursor = self.conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM events")

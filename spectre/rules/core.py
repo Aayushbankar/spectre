@@ -2,8 +2,9 @@
 Core rule dataclasses for Spectre HIDS
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 
 @dataclass
@@ -13,7 +14,7 @@ class MitreMapping:
     technique_name: str
 
     @classmethod
-    def from_dict(cls, data: Dict) -> "MitreMapping":
+    def from_dict(cls, data: dict) -> MitreMapping:
         return cls(
             tactic=data["tactic"],
             technique_id=data["technique_id"],
@@ -29,22 +30,22 @@ class BehavioralRule:
     description: str
 
     # Process ancestry matching criteria
-    parent_names: Optional[List[str]] = None
-    child_names: Optional[List[str]] = None
-    ancestor_names: Optional[List[str]] = None
-    descendant_names: Optional[List[str]] = None
+    parent_names: list[str] | None = None
+    child_names: list[str] | None = None
+    ancestor_names: list[str] | None = None
+    descendant_names: list[str] | None = None
 
     # Process resource matching criteria (V4)
-    process_names: Optional[List[str]] = None
-    file_paths: Optional[List[str]] = None
-    file_events: Optional[List[str]] = None  # e.g., ["READ", "WRITE"]
-    socket_events: Optional[List[str]] = None  # e.g., ["CONNECT", "LISTEN"]
+    process_names: list[str] | None = None
+    file_paths: list[str] | None = None
+    file_events: list[str] | None = None  # e.g., ["READ", "WRITE"]
+    socket_events: list[str] | None = None  # e.g., ["CONNECT", "LISTEN"]
 
     # MITRE ATT&CK mapping (V5)
-    mitre_attack: Optional[List[MitreMapping]] = None
+    mitre_attack: list[MitreMapping] | None = None
 
     @classmethod
-    def from_dict(cls, data: Dict) -> "BehavioralRule":
+    def from_dict(cls, data: dict) -> BehavioralRule:
         mitre = None
         if "mitre_attack" in data and data["mitre_attack"]:
             mitre = [MitreMapping.from_dict(m) for m in data["mitre_attack"]]
@@ -74,7 +75,7 @@ class BehavioralRule:
 
 
 # Default hardcoded fallback rules
-DEFAULT_RULES: List[BehavioralRule] = [
+DEFAULT_RULES: list[BehavioralRule] = [
     BehavioralRule(
         id="web_server_shell",
         name="Web Server Spawning Shell",
@@ -130,7 +131,7 @@ DEFAULT_RULES: List[BehavioralRule] = [
 ]
 
 
-def load_rules_from_file(filepath: str) -> List[BehavioralRule]:
+def load_rules_from_file(filepath: str) -> list[BehavioralRule]:
     """
     Loads custom behavioral rules from a JSON file.
     Falls back to DEFAULT_RULES if file does not exist or fails to parse.

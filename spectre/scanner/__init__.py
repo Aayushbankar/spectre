@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import hashlib
 import os
 from typing import Dict, List, Optional
@@ -47,7 +49,7 @@ class YaraScanner:
         except Exception as e:
             print(f"[!] Failed to compile YARA rules: {e}")
 
-    def get_file_hash(self, filepath: str) -> Optional[str]:
+    def get_file_hash(self, filepath: str) -> str | None:
         """Calculates the SHA256 hash of a file."""
         if not os.path.isfile(filepath):
             return None
@@ -60,7 +62,7 @@ class YaraScanner:
         except Exception:
             return None
 
-    def scan_file(self, filepath: str) -> List[str]:
+    def scan_file(self, filepath: str) -> list[str]:
         """
         Scans a single file against loaded YARA rules.
         Returns a list of matched rule names.

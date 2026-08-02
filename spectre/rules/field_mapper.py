@@ -2,8 +2,9 @@
 Field Mapper - Maps Sigma fields to Spectre rule fields
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 
 @dataclass
@@ -13,7 +14,7 @@ class FieldMapping:
     sigma_field: str
     spectre_field: str
     operator: str = "equals"  # equals, contains, startswith, endswith, regex, cidr
-    modifier: Optional[str] = None
+    modifier: str | None = None
 
 
 # Comprehensive field mapping from Sigma to Spectre
@@ -89,17 +90,17 @@ SPECTRE_RULE_FIELDS = {
 }
 
 
-def map_sigma_field(sigma_field: str) -> Optional[FieldMapping]:
+def map_sigma_field(sigma_field: str) -> FieldMapping | None:
     """Map a Sigma field to Spectre field mapping"""
     return SIGMA_TO_SPECTRE_FIELDS.get(sigma_field)
 
 
-def get_spectre_fields_for_category(category: str) -> List[str]:
+def get_spectre_fields_for_category(category: str) -> list[str]:
     """Get Sigma fields that map to a Spectre rule field category"""
     return SPECTRE_RULE_FIELDS.get(category, [])
 
 
-def extract_mitre_from_tags(tags: List[str]) -> List[Dict[str, str]]:
+def extract_mitre_from_tags(tags: list[str]) -> list[dict[str, str]]:
     """Extract MITRE ATT&CK techniques from Sigma tags"""
     mitre = []
     for tag in tags:

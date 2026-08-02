@@ -2,8 +2,10 @@
 Rule Compiler - Compiles Sigma rules to Spectre BehavioralRule objects
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .core import BehavioralRule, MitreMapping
 from .field_mapper import extract_mitre_from_tags, map_sigma_field
@@ -14,9 +16,9 @@ from .sigma_parser import SigmaParser, SigmaRule
 class CompilationResult:
     """Result of Sigma to Spectre compilation"""
 
-    rule: Optional[BehavioralRule] = None
-    errors: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    rule: BehavioralRule | None = None
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 class SigmaCompiler:
@@ -81,12 +83,12 @@ class SigmaCompiler:
 
     def _build_rule_fields(
         self,
-        selections: Dict[str, Any],
+        selections: dict[str, Any],
         condition: str,
         sigma_rule: SigmaRule,
-    ) -> Dict[str, List[str]]:
+    ) -> dict[str, list[str]]:
         """Build Spectre rule fields from Sigma selections"""
-        fields: Dict[str, set] = {
+        fields: dict[str, set] = {
             "parent_names": set(),
             "child_names": set(),
             "ancestor_names": set(),
@@ -100,8 +102,8 @@ class SigmaCompiler:
         # Determine rule type from logsource
         logsource = sigma_rule.logsource
         category = logsource.get("category", "")
-        product = logsource.get("product", "")
-        service = logsource.get("service", "")
+        logsource.get("product", "")
+        logsource.get("service", "")
 
         is_process_creation = category in ["process_creation", "process_access"]
         is_file_event = category in [
@@ -113,7 +115,7 @@ class SigmaCompiler:
         is_network = category in ["network_connection", "dns_query", "http"]
 
         # Process each selection
-        for sel_name, sel_data in selections.items():
+        for _sel_name, sel_data in selections.items():
             if not isinstance(sel_data, dict):
                 continue
 
@@ -142,7 +144,7 @@ class SigmaCompiler:
                     # Could extract IPs/ports for more specific matching
 
         # Also check for process names in any selection
-        for sel_name, sel_data in selections.items():
+        for _sel_name, sel_data in selections.items():
             if not isinstance(sel_data, dict):
                 continue
             for sigma_field, value in sel_data.items():
@@ -156,7 +158,7 @@ class SigmaCompiler:
         # Convert sets to lists, remove empty
         return {k: list(v) for k, v in fields.items() if v}
 
-    def _extract_mitre(self, sigma_rule: SigmaRule) -> Optional[List[MitreMapping]]:
+    def _extract_mitre(self, sigma_rule: SigmaRule) -> list[MitreMapping] | None:
         """Extract MITRE ATT&CK mappings from Sigma rule"""
         mitre_data = extract_mitre_from_tags(sigma_rule.tags)
 

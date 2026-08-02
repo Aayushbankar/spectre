@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import time
 from collections import deque
 from typing import Deque, Dict, List, Optional, Tuple
@@ -16,12 +18,12 @@ class ProcessResourceGraph:
         self.graph = nx.DiGraph()
         # Deque of (timestamp, event_type, data)
         # u and v are nodes. u is always the process_key. v can be child process_key or resource_node.
-        self.events: Deque[Tuple[float, str, Tuple]] = deque()
+        self.events: deque[tuple[float, str, tuple]] = deque()
         # Track active processes to avoid prematurely garbage collecting alive processes
         # Maps process_key -> last_seen_time
-        self.active_processes: Dict[Tuple[int, float], float] = {}
+        self.active_processes: dict[tuple[int, float], float] = {}
 
-    def update_active_processes(self, current_processes: Dict[int, float]):
+    def update_active_processes(self, current_processes: dict[int, float]):
         """
         Updates the active processes registry with the latest system process snapshot.
         """
@@ -29,7 +31,7 @@ class ProcessResourceGraph:
         for pid, ctime in current_processes.items():
             self.active_processes[(pid, ctime)] = now
 
-    def add_chain(self, chain: List[Dict]):
+    def add_chain(self, chain: list[dict]):
         """
         Adds a process ancestry chain and all its resources to the graph.
         """
@@ -150,7 +152,7 @@ class ProcessResourceGraph:
         for node in nodes_to_remove:
             self.graph.remove_node(node)
 
-    def get_stats(self) -> Dict[str, int]:
+    def get_stats(self) -> dict[str, int]:
         """
         Returns simple node and edge metrics for logging.
         """

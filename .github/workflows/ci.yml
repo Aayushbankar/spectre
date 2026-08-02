@@ -166,5 +166,5 @@ jobs:
           docker run --rm --privileged --pid=host spectre/hids:test --help
 
   concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true

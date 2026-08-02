@@ -3,9 +3,11 @@ Sigma Rule Parser for Spectre HIDS
 Converts Sigma YAML rules to Spectre BehavioralRule objects
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import yaml
 
@@ -20,12 +22,12 @@ class SigmaRule:
     status: str
     author: str
     date: str
-    logsource: Dict[str, str]
-    detection: Dict[str, Any]
+    logsource: dict[str, str]
+    detection: dict[str, Any]
     level: str
-    tags: List[str] = field(default_factory=list)
-    references: List[str] = field(default_factory=list)
-    falsepositives: List[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    references: list[str] = field(default_factory=list)
+    falsepositives: list[str] = field(default_factory=list)
     license: str = "MIT"
 
 
@@ -76,10 +78,10 @@ class SigmaParser:
     }
 
     def __init__(self):
-        self.errors: List[str] = []
-        self.warnings: List[str] = []
+        self.errors: list[str] = []
+        self.warnings: list[str] = []
 
-    def parse_file(self, path: Union[str, Path]) -> SigmaRule:
+    def parse_file(self, path: str | Path) -> SigmaRule:
         """Parse a Sigma rule from YAML file"""
         path = Path(path)
         with open(path) as f:
@@ -108,7 +110,7 @@ class SigmaParser:
             raise ValueError(f"Missing 'condition' in detection section in {source}")
 
         # Create SigmaRule object
-        rule = SigmaRule(
+        return SigmaRule(
             title=data["title"],
             id=data["id"],
             description=data.get("description", ""),
@@ -124,15 +126,13 @@ class SigmaParser:
             license=data.get("license", "MIT"),
         )
 
-        return rule
-
     def parse_condition(self, condition: str) -> SigmaCondition:
         """Parse Sigma condition string into structured format"""
         # This is a simplified parser - full implementation would use a proper parser
         # For now, we return the raw condition and mark it for later processing
         return SigmaCondition(raw=condition)
 
-    def get_field_mapping(self, sigma_field: str) -> Optional[str]:
+    def get_field_mapping(self, sigma_field: str) -> str | None:
         """Map Sigma field name to Spectre field name"""
         # Handle modifiers (e.g., "Image|endswith")
         for sigma_key, spectre_field in self.FIELD_MAPPINGS.items():
@@ -142,9 +142,9 @@ class SigmaParser:
 
     def extract_field_conditions(
         self,
-        detection: Dict[str, Any],
+        detection: dict[str, Any],
         condition: str,
-    ) -> Dict[str, List[Dict]]:
+    ) -> dict[str, list[dict]]:
         """Extract field conditions from detection section based on condition"""
         # This is a placeholder for the full implementation
         # Full implementation would:
@@ -154,7 +154,7 @@ class SigmaParser:
         return {}
 
 
-def parse_sigma_file(path: Union[str, Path]) -> SigmaRule:
+def parse_sigma_file(path: str | Path) -> SigmaRule:
     """Convenience function to parse a Sigma rule file"""
     parser = SigmaParser()
     return parser.parse_file(path)

@@ -35,7 +35,7 @@ class Container:
             self.logger.warning(f"Process {pid} no longer exists. Cannot apply mitigation.")
             return False
         except Exception as e:
-            self.logger.error(f"Error enumerating process tree for {pid}: {e}")
+            self.logger.exception(f"Error enumerating process tree for {pid}: {e}")
             return False
 
         success = True
@@ -47,7 +47,7 @@ class Container:
                 try:
                     p.send_signal(signal.SIGSTOP)
                 except Exception as e:
-                    self.logger.error(f"Failed to STOP pid {p.pid}: {e}")
+                    self.logger.exception(f"Failed to STOP pid {p.pid}: {e}")
                     success = False
 
         elif self.action == "kill":
@@ -58,7 +58,7 @@ class Container:
                 try:
                     p.kill()
                 except Exception as e:
-                    self.logger.error(f"Failed to KILL pid {p.pid}: {e}")
+                    self.logger.exception(f"Failed to KILL pid {p.pid}: {e}")
                     success = False
 
         else:
