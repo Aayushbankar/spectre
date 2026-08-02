@@ -1,6 +1,9 @@
-from typing import Dict, List, Optional, Tuple
+from __future__ import annotations
 
-from ..rules import BehavioralRule
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from spectre.rules import BehavioralRule
 
 
 class DetectionEngine:
@@ -9,15 +12,15 @@ class DetectionEngine:
     against behavioral rules to match threats.
     """
 
-    def __init__(self, rules: List[BehavioralRule]):
+    def __init__(self, rules: list[BehavioralRule]):
         self.rules = rules
 
-    def evaluate_chain(self, chain: List[Dict]) -> List[Tuple[BehavioralRule, Dict, str]]:
+    def evaluate_chain(self, chain: list[dict]) -> list[tuple[BehavioralRule, dict, str]]:
         """
         Evaluates a process chain and its resources against rules.
         Returns a list of matches: (matched_rule, offending_process_dict, detail_str)
         """
-        matches = []
+        matches: list[tuple[BehavioralRule, dict, str]] = []
         if not chain:
             return matches
 

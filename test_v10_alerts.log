@@ -1,0 +1,5 @@
+2026-06-29 13:14:57,855 - WARNING - [WARNING] Process 'python' (PID: 8234) triggered rule 'Python Accessing Hosts Configuration' (Score: 12) | Event: read/write file: /etc/hosts (READ) | MITRE: T1016 (Discovery) | Session Leader PID: 1 (Total Score: 12/10)
+2026-06-29 13:14:57,855 - WARNING - [ALERT] Process Session Exceeded Threat Threshold (Score: 12) - Explanation: Process session leader 'systemd' (PID: 1) accumulated threat score 12 which exceeds the alert threshold of 10!
+Triggered behaviors:
+  - Python Accessing Hosts Configuration (Score: 12) | Process 'python' (PID: 8234) -> read/write file: /etc/hosts (READ) | MITRE: T1016 (Discovery)
+

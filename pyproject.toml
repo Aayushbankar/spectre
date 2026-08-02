@@ -86,6 +86,9 @@ select = [
 ignore = [
     "S101", "S106", "S311", "S603", "S607", "PLR2004", "T201", "T203", "ARG001", "ARG002"
 ]
+exclude = [
+    "scratch/**",
+]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S106", "S311", "T201", "T203"]
@@ -96,7 +99,7 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

@@ -81,7 +81,10 @@ def get_installed_packs() -> list[str]:
     """Get list of installed rule packs"""
     if REGISTRY_FILE.exists():
         with REGISTRY_FILE.open() as f:
-            return json.load(f).get("installed", [])
+            data = json.load(f)
+            installed = data.get("installed", [])
+            if isinstance(installed, list):
+                return [str(x) for x in installed]
     return []
 
 
@@ -159,10 +162,11 @@ def list_packs(verbose: bool = False):
     for pack_id, info in RULE_PACKS.items():
         status = "[green]Installed[/green]" if pack_id in installed else "[dim]Available[/dim]"
         tags = ", ".join(info["tags"])
+        desc = str(info["description"])
         table.add_row(
             pack_id,
             status,
-            info["description"],
+            desc,
             str(len(info["rules"])),
             tags,
         )
@@ -247,7 +251,7 @@ def rule_info(pack_name):
             try:
                 with rule_path.open() as f:
                     data = yaml.safe_load(f)
-                    desc = data.get("description", "No description")
+                    desc = str(data.get("description", "No description"))
             except Exception as e:  # noqa: S110
                 _ = e
                 pass

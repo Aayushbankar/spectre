@@ -1,6 +1,6 @@
 import time
 from collections import deque
-from typing import Dict, List, Optional, Tuple
+from typing import Deque, Dict, List, Optional, Tuple
 
 import networkx as nx
 
@@ -16,7 +16,7 @@ class ProcessResourceGraph:
         self.graph = nx.DiGraph()
         # Deque of (timestamp, event_type, data)
         # u and v are nodes. u is always the process_key. v can be child process_key or resource_node.
-        self.events = deque()
+        self.events: Deque[Tuple[float, str, Tuple]] = deque()
         # Track active processes to avoid prematurely garbage collecting alive processes
         # Maps process_key -> last_seen_time
         self.active_processes: Dict[Tuple[int, float], float] = {}

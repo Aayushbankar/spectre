@@ -1,8 +1,9 @@
+from __future__ import annotations
+
 import logging
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List
 
 
 @dataclass
@@ -10,21 +11,21 @@ class Alert:
     rule_id: str
     rule_name: str
     score: int
-    chain: List[Dict]
+    chain: list[dict]
     explanation: str
     timestamp: float = field(default_factory=time.time)
 
 
-def format_process_resource_tree(chain: List[Dict]) -> List[str]:
+def format_process_resource_tree(chain: list[dict]) -> list[str]:
     """
     Formats a process chain and its resource events (Files, Sockets)
     as a clean, structured ASCII tree.
     """
-    lines = []
+    lines: list[str] = []
     if not chain:
         return lines
 
-    def helper(idx: int, prefix: str):
+    def helper(idx: int, prefix: str) -> None:
         proc = chain[idx]
         cmd_str = " ".join(proc["cmdline"]) if proc["cmdline"] else proc["name"]
         if len(cmd_str) > 80:
@@ -34,7 +35,7 @@ def format_process_resource_tree(chain: List[Dict]) -> List[str]:
         lines.append(f"{prefix}{proc_line}")
 
         # Gather resource sub-items
-        resources = []
+        resources: list[str] = []
         for f in proc.get("files", []):
             resources.append(f"[{f['event']}] {f['path']}")
         for c in proc.get("connections", []):
@@ -45,7 +46,7 @@ def format_process_resource_tree(chain: List[Dict]) -> List[str]:
         has_next_proc = idx < len(chain) - 1
 
         # All children of this process node
-        children = []
+        children: list[tuple[str, str | int]] = []
         for res in resources:
             children.append(("resource", res))
         if has_next_proc:
@@ -61,7 +62,7 @@ def format_process_resource_tree(chain: List[Dict]) -> List[str]:
             if child_type == "resource":
                 lines.append(f"{prefix}{char_branch}{child_val}")
             elif child_type == "process":
-                helper(child_val, prefix + char_extension)
+                helper(int(child_val), prefix + char_extension)
 
     helper(0, "")
     return lines
@@ -74,7 +75,7 @@ class ExplanationEngine:
     """
 
     @staticmethod
-    def generate(rule_id: str, parent: Dict, child: Dict) -> str:
+    def generate(rule_id: str, parent: dict, child: dict) -> str:
         parent_cmd = " ".join(parent["cmdline"]) if parent["cmdline"] else parent["name"]
         child_cmd = " ".join(child["cmdline"]) if child["cmdline"] else child["name"]
 
@@ -85,27 +86,40 @@ class ExplanationEngine:
 
         if rule_id == "web_server_shell":
             return (
-                f"Web server '{parent['name']}' (PID: {parent['pid']}) spawned an interactive shell '{child['name']}' (PID: {child['pid']}) [Cmd: {child_cmd}]. "
-                f"This process pattern is highly suspicious and typical of web shell access or remote code execution (RCE) attempts."
+                f"Web server '{parent['name']}' (PID: {parent['pid']}) "
+                f"spawned an interactive shell '{child['name']}' (PID: {child['pid']}) "
+                f"[Cmd: {child_cmd}]. "
+                f"This process pattern is highly suspicious and typical of web shell "
+                f"access or remote code execution (RCE) attempts."
             )
         if rule_id == "shell_network_tool":
             return (
-                f"Shell '{parent['name']}' (PID: {parent['pid']}) spawned network tool '{child['name']}' (PID: {child['pid']}) [Cmd: {child_cmd}]. "
-                f"This may indicate active host reconnaissance, port scanning, or the establishment of outbound traffic redirection."
+                f"Shell '{parent['name']}' (PID: {parent['pid']}) "
+                f"spawned network tool '{child['name']}' (PID: {child['pid']}) "
+                f"[Cmd: {child_cmd}]. "
+                f"This may indicate active host reconnaissance, port scanning, or the "
+                f"establishment of outbound traffic redirection."
             )
         if rule_id == "shell_downloader":
             return (
-                f"Shell '{parent['name']}' (PID: {parent['pid']}) spawned transfer utility '{child['name']}' (PID: {child['pid']}) [Cmd: {child_cmd}]. "
-                f"This is a common behavior when downloading secondary payloads, scripts, or post-exploitation toolkits."
+                f"Shell '{parent['name']}' (PID: {parent['pid']}) "
+                f"spawned transfer utility '{child['name']}' (PID: {child['pid']}) "
+                f"[Cmd: {child_cmd}]. "
+                f"This is a common behavior when downloading secondary payloads, "
+                f"scripts, or post-exploitation toolkits."
             )
         if rule_id == "web_server_compiler":
             return (
-                f"Web server '{parent['name']}' (PID: {parent['pid']}) spawned compiler/interpreter '{child['name']}' (PID: {child['pid']}) [Cmd: {child_cmd}]. "
-                f"This suggests compile-on-site exploits or the execution of server-side automation scripts by an unauthorized user."
+                f"Web server '{parent['name']}' (PID: {parent['pid']}) "
+                f"spawned compiler/interpreter '{child['name']}' (PID: {child['pid']}) "
+                f"[Cmd: {child_cmd}]. "
+                f"This suggests compile-on-site exploits or the execution of "
+                f"server-side automation scripts by an unauthorized user."
             )
         return (
-            f"Process '{child['name']}' (PID: {child['pid']}) [Cmd: {child_cmd}] was spawned by "
-            f"'{parent['name']}' (PID: {parent['pid']}) [Cmd: {parent_cmd}], violating rule '{rule_id}'."
+            f"Process '{child['name']}' (PID: {child['pid']}) [Cmd: {child_cmd}] "
+            f"was spawned by '{parent['name']}' (PID: {parent['pid']}) "
+            f"[Cmd: {parent_cmd}], violating rule '{rule_id}'."
         )
 
 

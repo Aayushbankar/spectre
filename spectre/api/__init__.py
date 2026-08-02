@@ -1,11 +1,11 @@
-import os
 import time
+from pathlib import Path
 
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import HTMLResponse
 
-from ..storage import SpectreDB
+from spectre.storage import SpectreDB
 
 
 def create_api(db: SpectreDB) -> FastAPI:
@@ -53,21 +53,24 @@ def create_api(db: SpectreDB) -> FastAPI:
     @app.get("/api/stats")
     def get_stats():
         """Summary statistics from the database."""
-        stats = db.get_stats()
-        return stats
+        return db.get_stats()
 
     # Serve dashboard if it exists
-    dashboard_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dashboard")
-    dashboard_index = os.path.join(dashboard_dir, "index.html")
+    dashboard_dir = Path(__file__).parent.parent / "dashboard"
+    dashboard_index = dashboard_dir / "index.html"
 
     @app.get("/", response_class=HTMLResponse)
     def serve_dashboard():
         """Serve the Spectre dashboard."""
-        if os.path.exists(dashboard_index):
-            with open(dashboard_index) as f:
+        if dashboard_index.exists():
+            with dashboard_index.open() as f:
                 return HTMLResponse(content=f.read())
         return HTMLResponse(
-            content="<h1>Spectre HIDS API</h1><p>Dashboard not installed. Visit <a href='/docs'>/docs</a> for API documentation.</p>",
+            content=(
+                "<h1>Spectre HIDS API</h1>"
+                "<p>Dashboard not installed. Visit <a href='/docs'>/docs</a> "
+                "for API documentation.</p>"
+            ),
         )
 
     return app

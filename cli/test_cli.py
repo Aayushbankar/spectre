@@ -137,7 +137,7 @@ def test_coverage(rules, format):
 
 def _test_single_rule(rule_file: str, pcap: str | None, trace: str | None) -> dict:
     """Test a single rule file"""
-    result = {
+    result: dict = {
         "rule": rule_file,
         "valid": False,
         "errors": [],

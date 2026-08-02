@@ -2,7 +2,7 @@
 Rule Compiler - Compiles Sigma rules to Spectre BehavioralRule objects
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .core import BehavioralRule, MitreMapping
@@ -15,14 +15,8 @@ class CompilationResult:
     """Result of Sigma to Spectre compilation"""
 
     rule: Optional[BehavioralRule] = None
-    errors: List[str] = None
-    warnings: List[str] = None
-
-    def __post_init__(self):
-        if self.errors is None:
-            self.errors = []
-        if self.warnings is None:
-            self.warnings = []
+    errors: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
 
 
 class SigmaCompiler:
@@ -92,7 +86,7 @@ class SigmaCompiler:
         sigma_rule: SigmaRule,
     ) -> Dict[str, List[str]]:
         """Build Spectre rule fields from Sigma selections"""
-        fields = {
+        fields: Dict[str, set] = {
             "parent_names": set(),
             "child_names": set(),
             "ancestor_names": set(),

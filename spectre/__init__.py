@@ -7,4 +7,4 @@ __author__ = "Aayush Bankar"
 __email__ = "aayushbankar42@gmail.com"
 
 # Re-export main for CLI
-from . import main
+from .main import main  # noqa: F401
