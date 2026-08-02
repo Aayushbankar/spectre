@@ -56,8 +56,13 @@ def create_api(db: SpectreDB) -> FastAPI:
         return db.get_stats()
 
     # Serve dashboard if it exists
-    dashboard_dir = Path(__file__).parent.parent / "dashboard"
+    from fastapi.staticfiles import StaticFiles
+    
+    dashboard_dir = Path(__file__).parent.parent / "frontend" / "dist"
     dashboard_index = dashboard_dir / "index.html"
+
+    if dashboard_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(dashboard_dir / "assets")), name="assets")
 
     @app.get("/", response_class=HTMLResponse)
     def serve_dashboard():
@@ -68,8 +73,7 @@ def create_api(db: SpectreDB) -> FastAPI:
         return HTMLResponse(
             content=(
                 "<h1>Spectre HIDS API</h1>"
-                "<p>Dashboard not installed. Visit <a href='/docs'>/docs</a> "
-                "for API documentation.</p>"
+                "<p>Dashboard not built. Run 'npm run build' in frontend/ to compile it.</p>"
             ),
         )
 
