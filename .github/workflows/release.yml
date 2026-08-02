@@ -61,6 +61,13 @@ jobs:
           git log --oneline --pretty=format:"- %s" $(git describe --tags --abbrev=0 HEAD^)..HEAD > changelog.md
           cat changelog.md
 
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
