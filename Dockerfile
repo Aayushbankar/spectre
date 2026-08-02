@@ -5,7 +5,7 @@
 # =============================================================================
 # BUILD STAGE
 # =============================================================================
-FROM python:3.12-slim AS builder
+FROM python:3.11-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -28,7 +28,7 @@ COPY --chown=builder:builder cli/ cli/
 COPY --chown=builder:builder rules.json ./
 
 # Install in editable mode for development, or build wheel
-RUN pip install --user --no-cache-dir -e ".[yara]"
+RUN pip install --user --no-cache-dir ".[yara]"
 
 # =============================================================================
 # RUNTIME STAGE - Distroless for minimal attack surface
@@ -44,7 +44,7 @@ COPY --from=builder /build/cli /app/cli
 COPY --from=builder /build/rules.json /app/rules.json
 
 # Set Python path
-ENV PYTHONPATH=/app:/home/nonroot/.local/lib/python3.12/site-packages
+ENV PYTHONPATH=/app:/home/nonroot/.local/lib/python3.11/site-packages
 ENV PATH=/home/nonroot/.local/bin:$PATH
 
 # Runtime configuration
@@ -69,7 +69,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import sys; sys.path.insert(0, '/app'); from spectre.storage import SpectreDB; db = SpectreDB('/var/lib/spectre/spectre.db'); print(db.get_stats()); db.close()" || exit 1
 
 # Default command
-ENTRYPOINT ["spectre"]
+ENTRYPOINT ["python", "-m", "cli.main"]
 CMD ["--help"]
 
 # Labels
