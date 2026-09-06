@@ -1,4 +1,5 @@
 mod telemetry;
+
 use aya::Bpf;
 use aya::programs::TracePoint;
 use aya::maps::RingBuf;
@@ -6,9 +7,10 @@ use std::convert::TryInto;
 use std::collections::HashMap;
 use tokio::signal;
 use std::env;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use spectre_rules::{SigmaRule, SigmaEngine};
-use spectre_graph::ProcessGraph;
+use spectre_graph::{ProcessGraph, ProcessKey};
 
 const ARGS_BUF_SIZE: usize = 2048;
 
@@ -22,6 +24,13 @@ struct ExecveEvent {
     args_size: u32,
     comm: [u8; 16],
     args_data: [u8; ARGS_BUF_SIZE],
+}
+
+fn now_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64
 }
 
 fn parse_cmdline(event: &ExecveEvent) -> (String, Vec<String>) {
@@ -77,9 +86,10 @@ async fn main() -> Result<(), anyhow::Error> {
     let args: Vec<String> = env::args().collect();
     let mock_mode = args.contains(&"--mock".to_string());
 
-    let mut graph = ProcessGraph::new(60);
+    // 60-second TTL
+    let mut graph = ProcessGraph::new(60_000_000_000);
     let engine = load_default_rules();
-    println!("🛡️  Spectre V2 Initialized: Loaded Sigma Rules & Graph Engine");
+    println!("🛡️  Spectre V2 Initialized: Loaded Sigma Rules & StableDiGraph Engine");
 
     if mock_mode {
         println!("🚀 Running in MOCK Mode (Simulating kernel telemetry without root)...");
@@ -102,9 +112,11 @@ async fn main() -> Result<(), anyhow::Error> {
                     idx += 1;
 
                     let cmdline = cmd_args.join(" ");
+                    let ts = now_ns();
                     println!("[EVENT] PID: {} | PPID: {} | Comm: {} | CmdLine: {}", pid, ppid, comm, cmdline);
 
-                    graph.add_spawn_edge(*ppid, *pid, comm);
+                    let child_key = ProcessKey::new(*pid, ts);
+                    graph.record_spawn_by_ppid(*ppid, child_key, comm, &cmdline, 1000, ts);
 
                     let mut event_map = HashMap::new();
                     event_map.insert("Image".to_string(), comm.to_string());
@@ -114,9 +126,16 @@ async fn main() -> Result<(), anyhow::Error> {
                     if engine.evaluate(&event_map) {
                         println!("🚨 [ALERT] Sigma Rule Triggered: '{}' (ID: {})", engine.rule_title, engine.rule_id);
                         println!("   Offender PID: {} | Cmd: {}", pid, cmdline);
+
+                        // Ancestry enrichment from graph
+                        let ancestors = graph.resolve_ancestors(&child_key, 5);
+                        println!("   Ancestry Lineage ({} levels):", ancestors.len());
+                        for (i, anc) in ancestors.iter().enumerate() {
+                            println!("     [{}] PID: {} (Comm: {}, Cmd: {})", i + 1, anc.key.pid, anc.comm, anc.cmdline);
+                        }
                     }
 
-                    graph.expire_old_events();
+                    graph.prune_expired(ts);
                 }
             }
         }
@@ -140,6 +159,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     break;
                 }
                 _ = tokio::time::sleep(tokio::time::Duration::from_millis(5)) => {
+                    let ts = now_ns();
                     while let Some(item) = ring_buf.next() {
                         let data = &*item;
                         if data.len() >= std::mem::size_of::<ExecveEvent>() {
@@ -153,7 +173,8 @@ async fn main() -> Result<(), anyhow::Error> {
                             println!("[EVENT] PID: {} | PPID: {} | Comm: {} | CmdLine: {}", 
                                 event.pid, event.ppid, comm_clean, cmdline);
                             
-                            graph.add_spawn_edge(event.ppid, event.pid, comm_clean);
+                            let child_key = ProcessKey::new(event.pid, ts);
+                            graph.record_spawn_by_ppid(event.ppid, child_key, comm_clean, &cmdline, event.uid, ts);
                             
                             let mut event_map = HashMap::new();
                             event_map.insert("Image".to_string(), comm_clean.to_string());
@@ -163,10 +184,16 @@ async fn main() -> Result<(), anyhow::Error> {
                             if engine.evaluate(&event_map) {
                                 println!("🚨 [ALERT] Sigma Rule Triggered: '{}' (ID: {})", engine.rule_title, engine.rule_id);
                                 println!("   Offender PID: {} | Cmd: {}", event.pid, cmdline);
+
+                                let ancestors = graph.resolve_ancestors(&child_key, 5);
+                                println!("   Ancestry Lineage ({} levels):", ancestors.len());
+                                for (i, anc) in ancestors.iter().enumerate() {
+                                    println!("     [{}] PID: {} (Comm: {}, Cmd: {})", i + 1, anc.key.pid, anc.comm, anc.cmdline);
+                                }
                             }
                         }
                     }
-                    graph.expire_old_events();
+                    graph.prune_expired(ts);
                 }
             }
         }
