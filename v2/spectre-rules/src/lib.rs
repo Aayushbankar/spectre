@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::Arc;
 use regex::Regex;
 use serde::Deserialize;
 use anyhow::{bail, Result};
+use ipnet::IpNet;
 
 #[derive(Debug, Deserialize)]
 pub struct SigmaRule {
@@ -221,6 +223,93 @@ impl Parser {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SelectionId(pub usize);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueListLogic {
+    Any,
+    All,
+}
+
+#[derive(Debug, Clone)]
+pub enum ValueMatcher {
+    Equals(String),
+    Contains(String),
+    StartsWith(String),
+    EndsWith(String),
+    Regex(Arc<Regex>),
+    Cidr(IpNet),
+}
+
+impl ValueMatcher {
+    #[inline]
+    pub fn matches(&self, field_val: &str) -> bool {
+        match self {
+            Self::Equals(v) => field_val.eq_ignore_ascii_case(v),
+            Self::Contains(v) => {
+                let haystack = field_val.to_ascii_lowercase();
+                let needle = v.to_ascii_lowercase();
+                haystack.contains(&needle)
+            }
+            Self::StartsWith(v) => {
+                let haystack = field_val.to_ascii_lowercase();
+                let needle = v.to_ascii_lowercase();
+                haystack.starts_with(&needle)
+            }
+            Self::EndsWith(v) => {
+                let haystack = field_val.to_ascii_lowercase();
+                let needle = v.to_ascii_lowercase();
+                haystack.ends_with(&needle)
+            }
+            Self::Regex(re) => re.is_match(field_val),
+            Self::Cidr(net) => {
+                if let Ok(ip) = field_val.trim().parse::<IpAddr>() {
+                    net.contains(&ip)
+                } else {
+                    false
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CompiledFieldCondition {
+    pub field: String,
+    pub logic: ValueListLogic,
+    pub matchers: Vec<ValueMatcher>,
+}
+
+impl CompiledFieldCondition {
+    pub fn evaluate(&self, event: &HashMap<String, String>) -> bool {
+        let field_val = match event.get(&self.field) {
+            Some(v) => v.as_str(),
+            None => "",
+        };
+
+        if self.matchers.is_empty() {
+            return false;
+        }
+
+        match self.logic {
+            ValueListLogic::Any => {
+                for matcher in &self.matchers {
+                    if matcher.matches(field_val) {
+                        return true;
+                    }
+                }
+                false
+            }
+            ValueListLogic::All => {
+                for matcher in &self.matchers {
+                    if !matcher.matches(field_val) {
+                        return false;
+                    }
+                }
+                true
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum CompiledExpr {
     Selection(SelectionId),
@@ -232,21 +321,6 @@ pub enum CompiledExpr {
     Not(Box<CompiledExpr>),
     And(Box<CompiledExpr>, Box<CompiledExpr>),
     Or(Box<CompiledExpr>, Box<CompiledExpr>),
-}
-
-#[derive(Debug, Clone)]
-pub enum CompiledOperator {
-    Equals(String),
-    Contains(String),
-    StartsWith(String),
-    EndsWith(String),
-    Regex(Arc<Regex>),
-}
-
-#[derive(Debug, Clone)]
-pub struct CompiledFieldCondition {
-    pub field: String,
-    pub op: CompiledOperator,
 }
 
 pub struct SigmaEngine {
@@ -267,21 +341,58 @@ impl SigmaEngine {
                     condition_str = s.to_string();
                 }
             } else if let Some(map) = v.as_mapping() {
-                let mut conds = Vec::new();
+                let mut field_conds = Vec::new();
                 for (field_key, field_val) in map {
                     let key = field_key.as_str().unwrap_or_default().to_string();
-                    let val = match field_val {
-                        serde_yaml::Value::String(s) => s.clone(),
-                        serde_yaml::Value::Number(n) => n.to_string(),
-                        _ => field_val.as_str().unwrap_or_default().to_string(),
+                    let parts: Vec<&str> = key.split('|').map(|s| s.trim()).collect();
+                    let field = parts[0].to_string();
+                    let modifiers: Vec<&str> = parts[1..].to_vec();
+
+                    let has_all = modifiers.iter().any(|&m| m.eq_ignore_ascii_case("all"));
+                    let logic = if has_all { ValueListLogic::All } else { ValueListLogic::Any };
+
+                    let op_name = modifiers
+                        .iter()
+                        .find(|&&m| !m.eq_ignore_ascii_case("all"))
+                        .copied()
+                        .unwrap_or("equals");
+
+                    let raw_strings: Vec<String> = match field_val {
+                        serde_yaml::Value::Sequence(seq) => seq
+                            .iter()
+                            .map(|item| match item {
+                                serde_yaml::Value::String(s) => s.clone(),
+                                serde_yaml::Value::Number(n) => n.to_string(),
+                                serde_yaml::Value::Bool(b) => b.to_string(),
+                                _ => "".to_string(),
+                            })
+                            .collect(),
+                        serde_yaml::Value::String(s) => vec![s.clone()],
+                        serde_yaml::Value::Number(n) => vec![n.to_string()],
+                        serde_yaml::Value::Bool(b) => vec![b.to_string()],
+                        _ => vec![],
                     };
 
-                    let parts: Vec<&str> = key.split('|').collect();
-                    let field = parts[0].to_string();
-                    let op_str = if parts.len() > 1 { parts[1] } else { "equals" };
-                    conds.push((field, val, op_str.to_string()));
+                    let mut matchers = Vec::with_capacity(raw_strings.len());
+                    for s in raw_strings {
+                        let matcher = match op_name.to_ascii_lowercase().as_str() {
+                            "contains" => ValueMatcher::Contains(s),
+                            "startswith" => ValueMatcher::StartsWith(s),
+                            "endswith" => ValueMatcher::EndsWith(s),
+                            "re" => ValueMatcher::Regex(Arc::new(Regex::new(&s)?)),
+                            "cidr" => ValueMatcher::Cidr(s.parse::<IpNet>()?),
+                            _ => ValueMatcher::Equals(s),
+                        };
+                        matchers.push(matcher);
+                    }
+
+                    field_conds.push(CompiledFieldCondition {
+                        field,
+                        logic,
+                        matchers,
+                    });
                 }
-                raw_selections.insert(k.clone(), conds);
+                raw_selections.insert(k.clone(), field_conds);
             }
         }
 
@@ -297,22 +408,10 @@ impl SigmaEngine {
         let mut name_to_id = HashMap::new();
         let mut selection_conditions = Vec::new();
 
-        for (name, conditions) in &raw_selections {
+        for (name, conditions) in raw_selections {
             let id = SelectionId(selection_conditions.len());
-            name_to_id.insert(name.clone(), id);
-
-            let mut compiled_conds = Vec::new();
-            for (field, val, op_str) in conditions {
-                let op = match op_str.as_str() {
-                    "contains" => CompiledOperator::Contains(val.clone()),
-                    "startswith" => CompiledOperator::StartsWith(val.clone()),
-                    "endswith" => CompiledOperator::EndsWith(val.clone()),
-                    "re" => CompiledOperator::Regex(Arc::new(Regex::new(val)?)),
-                    _ => CompiledOperator::Equals(val.clone()),
-                };
-                compiled_conds.push(CompiledFieldCondition { field: field.clone(), op });
-            }
-            selection_conditions.push(compiled_conds);
+            name_to_id.insert(name, id);
+            selection_conditions.push(conditions);
         }
 
         let condition_root = Self::compile_node(&ast, &name_to_id)?;
@@ -402,15 +501,7 @@ impl SigmaEngine {
         let mut matched = true;
 
         for cond in conditions {
-            let field_val = event.get(&cond.field).map(|s| s.as_str()).unwrap_or("");
-            let is_match = match &cond.op {
-                CompiledOperator::Equals(v) => field_val == v,
-                CompiledOperator::Contains(v) => field_val.contains(v),
-                CompiledOperator::StartsWith(v) => field_val.starts_with(v),
-                CompiledOperator::EndsWith(v) => field_val.ends_with(v),
-                CompiledOperator::Regex(re) => re.is_match(field_val),
-            };
-            if !is_match {
+            if !cond.evaluate(event) {
                 matched = false;
                 break;
             }
