@@ -1,3 +1,4 @@
+mod pipeline;
 mod mitigation;
 mod telemetry;
 mod enrichment;
