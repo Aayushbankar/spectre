@@ -1,3 +1,4 @@
+mod telemetry;
 use aya::Bpf;
 use aya::programs::TracePoint;
 use aya::maps::RingBuf;
