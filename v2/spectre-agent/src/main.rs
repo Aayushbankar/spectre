@@ -6,9 +6,11 @@ use aya::programs::TracePoint;
 use aya::maps::RingBuf;
 use std::convert::TryInto;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::signal;
 use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
+use parking_lot::RwLock;
 
 use spectre_rules::{SigmaRule, SigmaEngine};
 use spectre_graph::{ProcessGraph, ProcessKey};
@@ -80,6 +82,30 @@ detection:
     SigmaEngine::parse(&rule).expect("Failed to compile Sigma rule")
 }
 
+fn spawn_background_gc(graph: Arc<RwLock<ProcessGraph>>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(2));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            interval.tick().await;
+            let now = now_ns();
+            let mut has_more = true;
+
+            while has_more {
+                let stats = {
+                    let mut g = graph.write();
+                    g.prune_expired_budgeted(now, 256)
+                };
+                has_more = stats.has_more;
+                if has_more {
+                    tokio::task::yield_now().await;
+                }
+            }
+        }
+    })
+}
+
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     env_logger::init();
@@ -87,9 +113,11 @@ async fn main() -> Result<(), anyhow::Error> {
     let args: Vec<String> = env::args().collect();
     let mock_mode = args.contains(&"--mock".to_string());
 
-    let mut graph = ProcessGraph::new(60_000_000_000);
+    let graph = Arc::new(RwLock::new(ProcessGraph::new(60_000_000_000)));
+    let _gc_handle = spawn_background_gc(Arc::clone(&graph));
+
     let engine = load_default_rules();
-    println!("🛡️  Spectre V2 Initialized: Loaded Sigma Rules & Graph Engine");
+    println!("🛡️  Spectre V2 Initialized: Loaded Sigma Rules, StableDiGraph & Background GC Worker");
 
     if mock_mode {
         println!("🚀 Running in MOCK Mode (Simulating kernel telemetry without root)...");
@@ -116,28 +144,32 @@ async fn main() -> Result<(), anyhow::Error> {
                     println!("[EVENT] PID: {} | PPID: {} | Comm: {} | CmdLine: {}", pid, ppid, comm, cmdline);
 
                     let child_key = ProcessKey::new(*pid, ts);
-                    graph.record_spawn_by_ppid(*ppid, child_key, comm, &cmdline, 1000, ts);
+                    {
+                        let mut g = graph.write();
+                        g.record_spawn_by_ppid(*ppid, child_key, comm, &cmdline, 1000, ts);
+                    }
 
                     let mut event_map = HashMap::new();
                     event_map.insert("Image".to_string(), comm.to_string());
                     event_map.insert("CommandLine".to_string(), cmdline.clone());
                     event_map.insert("User".to_string(), "www-data".to_string());
 
-                    // Dynamic graph enrichment
-                    enrichment::enrich_event_from_graph(&graph, &child_key, &mut event_map);
+                    {
+                        let g = graph.read();
+                        enrichment::enrich_event_from_graph(&g, &child_key, &mut event_map);
+                    }
 
                     if engine.evaluate(&event_map) {
                         println!("🚨 [ALERT] Sigma Rule Triggered: '{}' (ID: {})", engine.rule_title, engine.rule_id);
                         println!("   Offender PID: {} | Cmd: {}", pid, cmdline);
 
-                        let ancestors = graph.resolve_ancestors(&child_key, 5);
+                        let g = graph.read();
+                        let ancestors = g.resolve_ancestors(&child_key, 5);
                         println!("   Ancestry Lineage ({} levels):", ancestors.len());
                         for (i, anc) in ancestors.iter().enumerate() {
                             println!("     [{}] PID: {} (Comm: {}, Cmd: {})", i + 1, anc.key.pid, anc.comm, anc.cmdline);
                         }
                     }
-
-                    graph.prune_expired(ts);
                 }
             }
         }
@@ -176,21 +208,27 @@ async fn main() -> Result<(), anyhow::Error> {
                                 event.pid, event.ppid, comm_clean, cmdline);
                             
                             let child_key = ProcessKey::new(event.pid, ts);
-                            graph.record_spawn_by_ppid(event.ppid, child_key, comm_clean, &cmdline, event.uid, ts);
+                            {
+                                let mut g = graph.write();
+                                g.record_spawn_by_ppid(event.ppid, child_key, comm_clean, &cmdline, event.uid, ts);
+                            }
                             
                             let mut event_map = HashMap::new();
                             event_map.insert("Image".to_string(), comm_clean.to_string());
                             event_map.insert("CommandLine".to_string(), cmdline.clone());
                             event_map.insert("User".to_string(), format!("{}", event.uid));
 
-                            // Dynamic graph enrichment
-                            enrichment::enrich_event_from_graph(&graph, &child_key, &mut event_map);
+                            {
+                                let g = graph.read();
+                                enrichment::enrich_event_from_graph(&g, &child_key, &mut event_map);
+                            }
                             
                             if engine.evaluate(&event_map) {
                                 println!("🚨 [ALERT] Sigma Rule Triggered: '{}' (ID: {})", engine.rule_title, engine.rule_id);
                                 println!("   Offender PID: {} | Cmd: {}", event.pid, cmdline);
 
-                                let ancestors = graph.resolve_ancestors(&child_key, 5);
+                                let g = graph.read();
+                                let ancestors = g.resolve_ancestors(&child_key, 5);
                                 println!("   Ancestry Lineage ({} levels):", ancestors.len());
                                 for (i, anc) in ancestors.iter().enumerate() {
                                     println!("     [{}] PID: {} (Comm: {}, Cmd: {})", i + 1, anc.key.pid, anc.comm, anc.cmdline);
@@ -198,7 +236,6 @@ async fn main() -> Result<(), anyhow::Error> {
                             }
                         }
                     }
-                    graph.prune_expired(ts);
                 }
             }
         }

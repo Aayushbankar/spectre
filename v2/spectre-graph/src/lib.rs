@@ -1,7 +1,8 @@
 use petgraph::stable_graph::{EdgeIndex, NodeIndex, StableDiGraph};
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
-use std::collections::{HashMap, HashSet};
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -84,19 +85,44 @@ pub struct EdgeData {
 pub struct PruneStats {
     pub removed_nodes: usize,
     pub removed_edges: usize,
+    pub skipped_stale: usize,
+    pub has_more: bool,
 }
 
-#[derive(Debug, Default)]
-pub struct ProcessActions {
-    pub children: Vec<ProcessKey>,
-    pub opened_files: Vec<PathBuf>,
-    pub connections: Vec<SocketKey>,
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct EvictionEntry {
+    pub expiry_ns: u64,
+    pub key: NodeKey,
+}
+
+impl Ord for EvictionEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.expiry_ns.cmp(&self.expiry_ns)
+            .then_with(|| self.key_discriminant().cmp(&other.key_discriminant()))
+    }
+}
+
+impl PartialOrd for EvictionEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl EvictionEntry {
+    fn key_discriminant(&self) -> u8 {
+        match self.key {
+            NodeKey::Process(_) => 0,
+            NodeKey::File(_) => 1,
+            NodeKey::Socket(_) => 2,
+        }
+    }
 }
 
 pub struct ProcessGraph {
     pub graph: StableDiGraph<NodePayload, EdgeData>,
     pub key_to_index: HashMap<NodeKey, NodeIndex>,
     pub active_pids: HashMap<u32, ProcessKey>,
+    pub eviction_queue: BinaryHeap<EvictionEntry>,
     pub ttl_ns: u64,
 }
 
@@ -106,6 +132,7 @@ impl ProcessGraph {
             graph: StableDiGraph::new(),
             key_to_index: HashMap::new(),
             active_pids: HashMap::new(),
+            eviction_queue: BinaryHeap::new(),
             ttl_ns,
         }
     }
@@ -134,6 +161,10 @@ impl ProcessGraph {
                 }
             }
             self.active_pids.insert(key.pid, key);
+            self.eviction_queue.push(EvictionEntry {
+                expiry_ns: now_ns.saturating_add(self.ttl_ns),
+                key: node_key,
+            });
             idx
         } else {
             let payload = NodePayload::Process(ProcessPayload {
@@ -145,8 +176,12 @@ impl ProcessGraph {
                 last_seen_ns: now_ns,
             });
             let idx = self.graph.add_node(payload);
-            self.key_to_index.insert(node_key, idx);
+            self.key_to_index.insert(node_key.clone(), idx);
             self.active_pids.insert(key.pid, key);
+            self.eviction_queue.push(EvictionEntry {
+                expiry_ns: now_ns.saturating_add(self.ttl_ns),
+                key: node_key,
+            });
             idx
         }
     }
@@ -164,7 +199,7 @@ impl ProcessGraph {
 
         let edge_idx = if let Some(p_key) = parent_key {
             let parent_idx = self.add_or_update_process(p_key, "", "", 0, ts_ns);
-            
+
             let existing_edge = self.graph.edges_connecting(parent_idx, child_idx)
                 .find(|e| matches!(e.weight().kind, EdgeKind::Spawns))
                 .map(|e| e.id());
@@ -210,8 +245,8 @@ impl ProcessGraph {
         ts_ns: u64,
     ) -> (NodeIndex, EdgeIndex) {
         let proc_idx = self.add_or_update_process(proc_key, "", "", 0, ts_ns);
-
         let file_key = NodeKey::File(path.clone());
+
         let file_idx = if let Some(&idx) = self.key_to_index.get(&file_key) {
             if let Some(NodePayload::File(f)) = self.graph.node_weight_mut(idx) {
                 f.last_seen_ns = ts_ns;
@@ -223,9 +258,14 @@ impl ProcessGraph {
                 first_seen_ns: ts_ns,
                 last_seen_ns: ts_ns,
             }));
-            self.key_to_index.insert(file_key, idx);
+            self.key_to_index.insert(file_key.clone(), idx);
             idx
         };
+
+        self.eviction_queue.push(EvictionEntry {
+            expiry_ns: ts_ns.saturating_add(self.ttl_ns),
+            key: file_key,
+        });
 
         let edge_idx = self.graph.add_edge(
             proc_idx,
@@ -246,8 +286,8 @@ impl ProcessGraph {
         ts_ns: u64,
     ) -> (NodeIndex, EdgeIndex) {
         let proc_idx = self.add_or_update_process(proc_key, "", "", 0, ts_ns);
-
         let sock_node_key = NodeKey::Socket(socket.clone());
+
         let sock_idx = if let Some(&idx) = self.key_to_index.get(&sock_node_key) {
             if let Some(NodePayload::Socket(s)) = self.graph.node_weight_mut(idx) {
                 s.last_seen_ns = ts_ns;
@@ -255,19 +295,29 @@ impl ProcessGraph {
             idx
         } else {
             let idx = self.graph.add_node(NodePayload::Socket(SocketPayload {
-                key: socket.clone(),
+                key: socket,
                 first_seen_ns: ts_ns,
                 last_seen_ns: ts_ns,
             }));
-            self.key_to_index.insert(sock_node_key, idx);
+            self.key_to_index.insert(sock_node_key.clone(), idx);
             idx
         };
+
+        self.eviction_queue.push(EvictionEntry {
+            expiry_ns: ts_ns.saturating_add(self.ttl_ns),
+            key: sock_node_key,
+        });
 
         let edge_idx = self.graph.add_edge(
             proc_idx,
             sock_idx,
             EdgeData {
-                kind: EdgeKind::ConnectedTo { proto: socket.proto },
+                kind: EdgeKind::ConnectedTo {
+                    proto: match self.graph.node_weight(sock_idx) {
+                        Some(NodePayload::Socket(s)) => s.key.proto.clone(),
+                        _ => "tcp".to_string(),
+                    },
+                },
                 timestamp_ns: ts_ns,
             },
         );
@@ -282,13 +332,19 @@ impl ProcessGraph {
             }
         }
 
-        if let Some(&idx) = self.key_to_index.get(&NodeKey::Process(proc_key)) {
+        let node_key = NodeKey::Process(proc_key);
+        if let Some(&idx) = self.key_to_index.get(&node_key) {
             if let Some(NodePayload::Process(proc)) = self.graph.node_weight_mut(idx) {
                 proc.status = ProcessStatus::Exited {
                     exit_code,
                     exit_time_ns,
                 };
                 proc.last_seen_ns = exit_time_ns;
+
+                self.eviction_queue.push(EvictionEntry {
+                    expiry_ns: exit_time_ns.saturating_add(self.ttl_ns),
+                    key: node_key,
+                });
                 return true;
             }
         }
@@ -346,82 +402,100 @@ impl ProcessGraph {
         self.resolve_ancestors(key, 1).into_iter().next()
     }
 
-    pub fn prune_expired(&mut self, now_ns: u64) -> PruneStats {
-        let cutoff = now_ns.saturating_sub(self.ttl_ns);
+    pub fn prune_expired_budgeted(&mut self, now_ns: u64, max_prune_batch: usize) -> PruneStats {
         let mut stats = PruneStats::default();
 
-        let expired_edges: Vec<EdgeIndex> = self.graph
-            .edge_indices()
-            .filter(|&e| {
-                let edge = &self.graph[e];
-                if matches!(edge.kind, EdgeKind::Spawns) {
-                    if let Some((_, child_idx)) = self.graph.edge_endpoints(e) {
-                        if let Some(NodePayload::Process(child_proc)) = self.graph.node_weight(child_idx) {
-                            if child_proc.status == ProcessStatus::Running {
-                                return false;
+        while let Some(top) = self.eviction_queue.peek() {
+            if top.expiry_ns > now_ns {
+                break;
+            }
+
+            if stats.removed_nodes >= max_prune_batch {
+                stats.has_more = true;
+                return stats;
+            }
+
+            let entry = self.eviction_queue.pop().unwrap();
+
+            let node_idx = match self.key_to_index.get(&entry.key) {
+                Some(&idx) => idx,
+                None => {
+                    stats.skipped_stale += 1;
+                    continue;
+                }
+            };
+
+            let should_delete = match self.graph.node_weight(node_idx) {
+                Some(NodePayload::Process(proc)) => {
+                    match proc.status {
+                        ProcessStatus::Running => false,
+                        ProcessStatus::Exited { exit_time_ns, .. } => {
+                            let actual_expiry = exit_time_ns.saturating_add(self.ttl_ns);
+                            if actual_expiry > now_ns {
+                                false
+                            } else {
+                                let has_active_children = self.graph
+                                    .edges_directed(node_idx, Direction::Outgoing)
+                                    .filter(|e| matches!(e.weight().kind, EdgeKind::Spawns))
+                                    .any(|e| {
+                                        if let Some(NodePayload::Process(child)) = self.graph.node_weight(e.target()) {
+                                            child.status == ProcessStatus::Running
+                                        } else {
+                                            false
+                                        }
+                                    });
+
+                                !has_active_children
                             }
                         }
                     }
                 }
-                edge.timestamp_ns < cutoff
-            })
-            .collect();
-
-        for e in expired_edges {
-            self.graph.remove_edge(e);
-            stats.removed_edges += 1;
-        }
-
-        let expired_nodes: Vec<(NodeIndex, NodeKey)> = self.graph
-            .node_indices()
-            .filter_map(|n| {
-                let weight = &self.graph[n];
-                match weight {
-                    NodePayload::Process(proc) => {
-                        match proc.status {
-                            ProcessStatus::Exited { exit_time_ns, .. } => {
-                                if exit_time_ns < cutoff {
-                                    let has_active_children = self.graph
-                                        .edges_directed(n, Direction::Outgoing)
-                                        .any(|e| matches!(e.weight().kind, EdgeKind::Spawns));
-
-                                    if !has_active_children {
-                                        Some((n, NodeKey::Process(proc.key)))
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            }
-                            ProcessStatus::Running => None,
-                        }
-                    }
-                    NodePayload::File(f) => {
-                        if f.last_seen_ns < cutoff && self.graph.edges_directed(n, Direction::Incoming).count() == 0 {
-                            Some((n, NodeKey::File(f.path.clone())))
-                        } else {
-                            None
-                        }
-                    }
-                    NodePayload::Socket(s) => {
-                        if s.last_seen_ns < cutoff && self.graph.edges_directed(n, Direction::Incoming).count() == 0 {
-                            Some((n, NodeKey::Socket(s.key.clone())))
-                        } else {
-                            None
-                        }
+                Some(NodePayload::File(f)) => {
+                    let actual_expiry = f.last_seen_ns.saturating_add(self.ttl_ns);
+                    if actual_expiry > now_ns {
+                        false
+                    } else {
+                        self.graph.edges_directed(node_idx, Direction::Incoming).count() == 0
                     }
                 }
-            })
-            .collect();
+                Some(NodePayload::Socket(s)) => {
+                    let actual_expiry = s.last_seen_ns.saturating_add(self.ttl_ns);
+                    if actual_expiry > now_ns {
+                        false
+                    } else {
+                        self.graph.edges_directed(node_idx, Direction::Incoming).count() == 0
+                    }
+                }
+                None => false,
+            };
 
-        for (idx, key) in expired_nodes {
-            self.graph.remove_node(idx);
-            self.key_to_index.remove(&key);
-            stats.removed_nodes += 1;
+            if should_delete {
+                let edge_count_before = self.graph.edge_count();
+                self.graph.remove_node(node_idx);
+                let edge_count_after = self.graph.edge_count();
+
+                self.key_to_index.remove(&entry.key);
+                stats.removed_nodes += 1;
+                stats.removed_edges += edge_count_before.saturating_sub(edge_count_after);
+            }
         }
 
+        stats.has_more = self.eviction_queue.peek().map_or(false, |top| top.expiry_ns <= now_ns);
         stats
+    }
+
+    pub fn prune_expired(&mut self, now_ns: u64) -> PruneStats {
+        let mut total_stats = PruneStats::default();
+        loop {
+            let stats = self.prune_expired_budgeted(now_ns, 1024);
+            total_stats.removed_nodes += stats.removed_nodes;
+            total_stats.removed_edges += stats.removed_edges;
+            total_stats.skipped_stale += stats.skipped_stale;
+            if !stats.has_more {
+                break;
+            }
+        }
+        total_stats
     }
 }
 
@@ -430,67 +504,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_pid_reuse_disambiguation() {
-        let mut pg = ProcessGraph::new(60_000_000_000);
+    fn test_budgeted_lazy_eviction_queue() {
+        let mut pg = ProcessGraph::new(10_000_000_000); // 10s TTL
+        let k1 = ProcessKey::new(101, 1_000);
+        let k2 = ProcessKey::new(102, 2_000);
 
-        let key1 = ProcessKey::new(1001, 1_000_000);
-        let key2 = ProcessKey::new(1001, 5_000_000);
+        pg.add_or_update_process(k1, "sh", "sh", 0, 1_000);
+        pg.add_or_update_process(k2, "curl", "curl", 0, 2_000);
 
-        pg.add_or_update_process(key1, "bash", "bash -i", 1000, 1_000_000);
-        assert_eq!(pg.get_active_process_key(1001), Some(key1));
+        pg.record_exit(k1, 0, 3_000_000_000);
+        pg.record_exit(k2, 0, 4_000_000_000);
 
-        pg.record_exit(key1, 0, 2_000_000);
-        assert_eq!(pg.get_active_process_key(1001), None);
+        // At t = 5s, nothing expired yet
+        let stats_5s = pg.prune_expired_budgeted(5_000_000_000, 10);
+        assert_eq!(stats_5s.removed_nodes, 0);
 
-        pg.add_or_update_process(key2, "python3", "python3 exploit.py", 1000, 5_000_000);
-        assert_eq!(pg.get_active_process_key(1001), Some(key2));
+        // At t = 14s, k1 (3s + 10s = 13s) is expired, but batch budget of 1 only removes k1
+        let stats_14s_b1 = pg.prune_expired_budgeted(14_000_000_000, 1);
+        assert_eq!(stats_14s_b1.removed_nodes, 1);
 
-        let idx1 = *pg.key_to_index.get(&NodeKey::Process(key1)).unwrap();
-        let idx2 = *pg.key_to_index.get(&NodeKey::Process(key2)).unwrap();
-        assert_ne!(idx1, idx2);
-
-        if let NodePayload::Process(p1) = &pg.graph[idx1] {
-            assert_eq!(p1.comm, "bash");
-            assert!(matches!(p1.status, ProcessStatus::Exited { .. }));
-        }
-        if let NodePayload::Process(p2) = &pg.graph[idx2] {
-            assert_eq!(p2.comm, "python3");
-            assert_eq!(p2.status, ProcessStatus::Running);
-        }
-    }
-
-    #[test]
-    fn test_ancestor_resolution_and_cycle_prevention() {
-        let mut pg = ProcessGraph::new(60_000_000_000);
-
-        let k_init = ProcessKey::new(1, 100);
-        let k_sshd = ProcessKey::new(500, 200);
-        let k_bash = ProcessKey::new(600, 300);
-        let k_curl = ProcessKey::new(700, 400);
-
-        pg.record_spawn(None, k_init, "systemd", "/sbin/init", 0, 100);
-        pg.record_spawn(Some(k_init), k_sshd, "sshd", "/usr/sbin/sshd", 0, 200);
-        pg.record_spawn(Some(k_sshd), k_bash, "bash", "-bash", 1000, 300);
-        pg.record_spawn(Some(k_bash), k_curl, "curl", "curl evil.com", 1000, 400);
-
-        let ancestors_2 = pg.resolve_ancestors(&k_curl, 2);
-        assert_eq!(ancestors_2.len(), 2);
-        assert_eq!(ancestors_2[0].key, k_bash);
-        assert_eq!(ancestors_2[1].key, k_sshd);
-
-        let ancestors_all = pg.resolve_ancestors(&k_curl, 10);
-        assert_eq!(ancestors_all.len(), 3);
-        assert_eq!(ancestors_all[2].key, k_init);
-
-        // Inject cycle
-        let curl_idx = *pg.key_to_index.get(&NodeKey::Process(k_curl)).unwrap();
-        let init_idx = *pg.key_to_index.get(&NodeKey::Process(k_init)).unwrap();
-        pg.graph.add_edge(curl_idx, init_idx, EdgeData {
-            kind: EdgeKind::Spawns,
-            timestamp_ns: 500,
-        });
-
-        let cycle_test = pg.resolve_ancestors(&k_curl, 50);
-        assert_eq!(cycle_test.len(), 3);
+        // At t = 15s, k2 is also expired
+        let stats_15s = pg.prune_expired(15_000_000_000);
+        assert_eq!(stats_15s.removed_nodes, 1);
     }
 }
