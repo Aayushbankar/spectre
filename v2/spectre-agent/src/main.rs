@@ -1,7 +1,7 @@
-mod pipeline;
-mod mitigation;
 mod telemetry;
 mod enrichment;
+mod mitigation;
+mod pipeline;
 
 use aya::Bpf;
 use aya::programs::TracePoint;
@@ -118,6 +118,9 @@ async fn main() -> Result<(), anyhow::Error> {
     let graph = Arc::new(RwLock::new(ProcessGraph::new(60_000_000_000)));
     let _gc_handle = spawn_background_gc(Arc::clone(&graph));
 
+    let stats = Arc::new(pipeline::PipelineStats::new());
+    let _metrics_handle = pipeline::spawn_metrics_reporter(Arc::clone(&stats), tokio::time::Duration::from_secs(5));
+
     let engine = load_default_rules();
     println!("🛡️  Spectre V2 Initialized: Loaded Sigma Rules, StableDiGraph & Background GC Worker");
 
@@ -144,6 +147,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     let cmdline = cmd_args.join(" ");
                     let ts = now_ns();
                     println!("[EVENT] PID: {} | PPID: {} | Comm: {} | CmdLine: {}", pid, ppid, comm, cmdline);
+                    stats.inc_ingested();
 
                     let child_key = ProcessKey::new(*pid, ts);
                     {
@@ -162,10 +166,14 @@ async fn main() -> Result<(), anyhow::Error> {
                     }
 
                     if engine.evaluate(&event_map) {
+                        stats.inc_alerts();
                         println!("🚨 [ALERT] Sigma Rule Triggered: '{}' (ID: {})", engine.rule_title, engine.rule_id);
                         let mitigation = mitigation::MitigationController::new();
                         match mitigation.terminate_process_tree(*pid, None) {
-                            Ok(killed) => println!("   ⚔️  [MITIGATION] Containment executed: safely terminated process tree ({:?})", killed),
+                            Ok(killed) => {
+                                stats.inc_mitigations();
+                                println!("   ⚔️  [MITIGATION] Containment executed: safely terminated process tree ({:?})", killed);
+                            }
                             Err(e) => println!("   ⚠️  [MITIGATION] Safety policy skipped/blocked termination: {}", e),
                         }
                         println!("   Offender PID: {} | Cmd: {}", pid, cmdline);
@@ -213,6 +221,7 @@ async fn main() -> Result<(), anyhow::Error> {
                             
                             println!("[EVENT] PID: {} | PPID: {} | Comm: {} | CmdLine: {}", 
                                 event.pid, event.ppid, comm_clean, cmdline);
+                            stats.inc_ingested();
                             
                             let child_key = ProcessKey::new(event.pid, ts);
                             {
@@ -231,12 +240,16 @@ async fn main() -> Result<(), anyhow::Error> {
                             }
                             
                             if engine.evaluate(&event_map) {
+                                stats.inc_alerts();
                                 println!("🚨 [ALERT] Sigma Rule Triggered: '{}' (ID: {})", engine.rule_title, engine.rule_id);
-                        let mitigation = mitigation::MitigationController::new();
-                        match mitigation.terminate_process_tree(event.pid, None) {
-                            Ok(killed) => println!("   ⚔️  [MITIGATION] Containment executed: safely terminated process tree ({:?})", killed),
-                            Err(e) => println!("   ⚠️  [MITIGATION] Safety policy skipped/blocked termination: {}", e),
-                        }
+                                let mitigation = mitigation::MitigationController::new();
+                                match mitigation.terminate_process_tree(event.pid, None) {
+                                    Ok(killed) => {
+                                        stats.inc_mitigations();
+                                        println!("   ⚔️  [MITIGATION] Containment executed: safely terminated process tree ({:?})", killed);
+                                    }
+                                    Err(e) => println!("   ⚠️  [MITIGATION] Safety policy skipped/blocked termination: {}", e),
+                                }
                                 println!("   Offender PID: {} | Cmd: {}", event.pid, cmdline);
 
                                 let g = graph.read();
