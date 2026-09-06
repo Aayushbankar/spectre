@@ -1,3 +1,4 @@
+mod mitigation;
 mod telemetry;
 mod enrichment;
 
@@ -161,6 +162,11 @@ async fn main() -> Result<(), anyhow::Error> {
 
                     if engine.evaluate(&event_map) {
                         println!("🚨 [ALERT] Sigma Rule Triggered: '{}' (ID: {})", engine.rule_title, engine.rule_id);
+                        let mitigation = mitigation::MitigationController::new();
+                        match mitigation.terminate_process_tree(*pid, None) {
+                            Ok(killed) => println!("   ⚔️  [MITIGATION] Containment executed: safely terminated process tree ({:?})", killed),
+                            Err(e) => println!("   ⚠️  [MITIGATION] Safety policy skipped/blocked termination: {}", e),
+                        }
                         println!("   Offender PID: {} | Cmd: {}", pid, cmdline);
 
                         let g = graph.read();
@@ -225,6 +231,11 @@ async fn main() -> Result<(), anyhow::Error> {
                             
                             if engine.evaluate(&event_map) {
                                 println!("🚨 [ALERT] Sigma Rule Triggered: '{}' (ID: {})", engine.rule_title, engine.rule_id);
+                        let mitigation = mitigation::MitigationController::new();
+                        match mitigation.terminate_process_tree(event.pid, None) {
+                            Ok(killed) => println!("   ⚔️  [MITIGATION] Containment executed: safely terminated process tree ({:?})", killed),
+                            Err(e) => println!("   ⚠️  [MITIGATION] Safety policy skipped/blocked termination: {}", e),
+                        }
                                 println!("   Offender PID: {} | Cmd: {}", event.pid, cmdline);
 
                                 let g = graph.read();
