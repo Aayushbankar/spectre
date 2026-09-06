@@ -163,7 +163,7 @@ impl ProcessGraph {
         let child_idx = self.add_or_update_process(child_key, child_comm, child_cmdline, child_uid, ts_ns);
 
         let edge_idx = if let Some(p_key) = parent_key {
-            let parent_idx = self.add_or_update_process(p_key, "unknown", "", 0, ts_ns);
+            let parent_idx = self.add_or_update_process(p_key, "", "", 0, ts_ns);
             
             let existing_edge = self.graph.edges_connecting(parent_idx, child_idx)
                 .find(|e| matches!(e.weight().kind, EdgeKind::Spawns))

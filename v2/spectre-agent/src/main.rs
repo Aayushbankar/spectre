@@ -1,4 +1,5 @@
 mod telemetry;
+mod enrichment;
 
 use aya::Bpf;
 use aya::programs::TracePoint;
@@ -86,10 +87,9 @@ async fn main() -> Result<(), anyhow::Error> {
     let args: Vec<String> = env::args().collect();
     let mock_mode = args.contains(&"--mock".to_string());
 
-    // 60-second TTL
     let mut graph = ProcessGraph::new(60_000_000_000);
     let engine = load_default_rules();
-    println!("🛡️  Spectre V2 Initialized: Loaded Sigma Rules & StableDiGraph Engine");
+    println!("🛡️  Spectre V2 Initialized: Loaded Sigma Rules & Graph Engine");
 
     if mock_mode {
         println!("🚀 Running in MOCK Mode (Simulating kernel telemetry without root)...");
@@ -123,11 +123,13 @@ async fn main() -> Result<(), anyhow::Error> {
                     event_map.insert("CommandLine".to_string(), cmdline.clone());
                     event_map.insert("User".to_string(), "www-data".to_string());
 
+                    // Dynamic graph enrichment
+                    enrichment::enrich_event_from_graph(&graph, &child_key, &mut event_map);
+
                     if engine.evaluate(&event_map) {
                         println!("🚨 [ALERT] Sigma Rule Triggered: '{}' (ID: {})", engine.rule_title, engine.rule_id);
                         println!("   Offender PID: {} | Cmd: {}", pid, cmdline);
 
-                        // Ancestry enrichment from graph
                         let ancestors = graph.resolve_ancestors(&child_key, 5);
                         println!("   Ancestry Lineage ({} levels):", ancestors.len());
                         for (i, anc) in ancestors.iter().enumerate() {
@@ -180,6 +182,9 @@ async fn main() -> Result<(), anyhow::Error> {
                             event_map.insert("Image".to_string(), comm_clean.to_string());
                             event_map.insert("CommandLine".to_string(), cmdline.clone());
                             event_map.insert("User".to_string(), format!("{}", event.uid));
+
+                            // Dynamic graph enrichment
+                            enrichment::enrich_event_from_graph(&graph, &child_key, &mut event_map);
                             
                             if engine.evaluate(&event_map) {
                                 println!("🚨 [ALERT] Sigma Rule Triggered: '{}' (ID: {})", engine.rule_title, engine.rule_id);
