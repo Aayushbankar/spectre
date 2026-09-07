@@ -240,34 +240,55 @@ On systems using cgroup v2, `freeze_cgroup()` writes `"1"` to `/sys/fs/cgroup/..
 
 ---
 
-## 8. Empirical Performance & Resource Benchmarks
+## 8. Terminal User Interface & Interactive Chain Inspection (`spectre-agent/src/tui.rs`)
+
+### 8.1 Zero-Port Embedded Architecture
+To eliminate web server attack surface (Vite/Node/HTTP listening sockets) on monitored infrastructure, Spectre V2 embeds an interactive, 30 FPS console dashboard built on `ratatui` and `crossterm`.
+* **Telemetry Decoupling**: The TUI rendering thread communicates with the kernel event pipeline via a bounded 500-slot `tokio::sync::mpsc` channel using non-blocking `try_send`. Slow terminal renders never backpressure kernel ring buffer drainage.
+* **Terminal Safety Guarantee**: The terminal state is encapsulated in `TuiRunner` which implements `Drop`. Exiting via `[Q]`, `Ctrl-C`, or an unexpected panic automatically restores `disable_raw_mode()` and `LeaveAlternateScreen`.
+
+### 8.2 Interactive Tabs & Chain Drill-down
+The interface exposes 4 operational tabs:
+1. **`[1] Dashboard`**: Displays real-time kernel execution events, active alert notifications, and system throughput (EPS rate, active graph nodes, ring buffer drops).
+2. **`[2] Lineage Tree`**: A compact generational overview of active process lineages.
+3. **`[3] Security Alerts`**: Full triage feed of matched Sigma rules, offending processes, and containment statuses.
+4. **`[4] Chain Inspector`**: An interactive, drill-down execution graph browser supporting:
+   * **Real-time vs. Historical Data**: Cycles between `ALL (LIVE + OLD)`, `LIVE REAL-TIME`, and `OLD / HISTORICAL` via `[F]`.
+   * **Ancestral Spine Graph**: Ascends the process tree to render the full chain from `ROOT KERNEL NAMESPACE` down to the target process.
+   * **Correlated Offshoots**: Directly renders child processes spawned, file paths opened, and network sockets connected by the target.
+   * **Deep Telemetry Card**: Command line arguments, UID, PID/PPID, start timestamp, execution duration, and Sigma rule violation verdicts.
+
+---
+
+## 9. Empirical Performance & Resource Benchmarks
 
 The following metrics were directly measured on the compiled release artifacts:
 
 | Metric | Measured Value | Methodology / Source |
 |---|---|---|
-| **Static Release Binary Size** | **4.8 MB** | `ls -lh target/release/spectre-agent` (stripped release profile) |
-| **Steady-State Memory (RSS)** | **4.8 MB** | Direct `ps -o rss` measurement during mock and eBPF ingestion loops |
+| **Static Release Binary Size** | **5.5 MB** | `ls -lh target/release/spectre-agent` (optimized release profile with TUI) |
+| **Steady-State Memory (RSS)** | **5.2 MB** | Direct `ps -o rss` measurement during mock and eBPF ingestion loops |
 | **Sigma AST Evaluation Rate** | **2,557,939 evals/sec** | Empirical benchmark (`tests/benchmark_eval.rs` executing 100,000 iterations) |
 | **Average Evaluation Latency** | **0.39 µs** | $1 \text{ second} / 2,557,939 \text{ evaluations}$ |
 | **Graph GC Lock Hold Time** | **< 30 µs** | 256-node budgeted eviction slice in background Tokio worker |
-| **Test Suite Execution** | **0.60s (all 15 tests pass)** | `cargo test --workspace --manifest-path=Cargo.toml` |
+| **Test Suite Execution** | **0.60s (all 16 tests pass)** | `cargo test --workspace --manifest-path=Cargo.toml` |
 
 ---
 
-## 9. Source Code Map
+## 10. Source Code Map
 
 | Subsystem | Component | File Path | Key Structs / Functions |
 |---|---|---|---|
 | **eBPF Sensor** | Tracepoint Probes | `ebpf-c/src/sensor.c` | `tracepoint_syscalls_sys_enter_execve` |
 | **eBPF Sensor** | Telemetry Protocol | `ebpf-c/include/telemetry_events.h` | `struct telemetry_header`, `struct telemetry_exec_event` |
-| **Agent Core** | Entrypoint & GC Task | `spectre-agent/src/main.rs` | `main`, background GC worker task |
+| **Agent Core** | Entrypoint & GC Task | `spectre-agent/src/main.rs` | `main`, background GC worker task, metrics dispatcher |
 | **Agent Core** | Deserialization | `spectre-agent/src/telemetry.rs` | `TelemetryHeader`, `TelemetryExecEvent`, `TelemetryForkEvent` |
 | **Agent Core** | Graph Enrichment | `spectre-agent/src/enrichment.rs` | `enrich_event_from_graph` |
 | **Agent Core** | Active Mitigation | `spectre-agent/src/mitigation.rs` | `MitigationController`, `terminate_process_tree`, `pidfd_send_signal` |
+| **Agent Core** | Terminal UI Console | `spectre-agent/src/tui.rs` | `TuiApp`, `TuiRunner`, `UiChainItem`, `render_chain_inspector_tab` |
 | **Agent Core** | Pipeline Telemetry | `spectre-agent/src/pipeline.rs` | `PipelineStats`, `start_metrics_reporter` |
 | **Rule Engine** | Pratt Parser | `spectre-rules/src/parser.rs` | `Parser::parse_expression`, `AstNode` |
 | **Rule Engine** | Spec Evaluator | `spectre-rules/src/evaluator.rs` | `SigmaEngine::evaluate`, value list OR/AND logic, CIDR matcher |
-| **Graph Engine** | Generational Graph | `spectre-graph/src/lib.rs` | `ProcessGraph`, `ProcessKey`, `evict_expired`, `get_ancestors` |
+| **Graph Engine** | Generational Graph | `spectre-graph/src/lib.rs` | `ProcessGraph`, `ProcessKey`, `get_chain_info`, `list_all_processes`, min-heap GC |
 
 

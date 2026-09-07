@@ -19,10 +19,11 @@ Project Spectre is a Host-based Intrusion Detection and Active Response System (
 | **Graph Architecture** | `petgraph::stable_graph::StableDiGraph` with cycle-safe traversals | Ancestry resolution up to 16 hops without stack recursion |
 | **Garbage Collection** | $O(K \log M)$ min-heap lazy eviction (`BinaryHeap<Reverse<EvictionEntry>>`) | Decoupled background task; lock hold time **< 30 µs** |
 | **Active Containment** | Safety guards (PID $\le 2$, self, parent, daemons) + `pidfd_send_signal` | Two-phase: Top-down `SIGSTOP` freeze, bottom-up `SIGKILL` |
-| **Resident Memory (RSS)** | Measured during active ingestion via `ps -o rss` | **4.8 MB** steady-state |
+| **Terminal UI Console** | Low-overhead 30 FPS console interface (`ratatui` + `crossterm`) | 4 interactive views: Dashboard, Lineage, Alerts, Chain Inspector |
+| **Resident Memory (RSS)** | Measured during active ingestion via `ps -o rss` | **5.2 MB** steady-state |
 | **Rule Evaluation Throughput** | Measured over 100,000 synthetic multi-clause AST evaluations | **2,557,939 evaluations/sec** (0.39 µs/eval) |
-| **Static Binary Size** | Stripped release binary (`target/release/spectre-agent`) | **4.8 MB** |
-| **Test Suite Verification** | Workspace unit, integration, and benchmark tests | **15 passed, 0 failed (100%)** in < 0.6s |
+| **Static Binary Size** | Stripped release binary (`target/release/spectre-agent`) | **5.5 MB** |
+| **Test Suite Verification** | Workspace unit, integration, and benchmark tests | **16 passed, 0 failed (100%)** in < 0.6s |
 
 ---
 
@@ -66,6 +67,15 @@ Project Spectre is a Host-based Intrusion Detection and Active Response System (
   - **Phase 2**: Traverses tree bottom-up (post-order), issuing `SIGKILL` so leaves exit before parents, eliminating orphaned processes.
 * Optional cgroup v2 freezer via `cgroup.freeze`.
 
+### 3.6 Terminal UI & Chain Inspector Subsystem (`spectre-agent/src/tui.rs`)
+* Embedded zero-port 30 FPS terminal user interface built on `ratatui` and `crossterm`.
+* Decoupled from kernel ingestion loops via bounded 500-slot `tokio::sync::mpsc` channels using non-blocking `try_send`.
+* 4 Interactive Views:
+  - **`[1] Dashboard`**: Live kernel event stream, active alert ticker, and system-wide throughput metrics.
+  - **`[2] Lineage Tree`**: Compact process ancestry overview.
+  - **`[3] Security Alerts`**: Filterable alert triage list with containment execution feedback.
+  - **`[4] Chain Inspector`**: Interactive process graph browser supporting both real-time active processes and historical exited data. Allows selecting any execution chain to visualize full ancestry spine (`Root -> Parents -> Selected Target`), spawned children, opened files, and network socket connections.
+
 ---
 
 ## 4. Empirical Performance Verification
@@ -76,10 +86,10 @@ All measurements were taken on Linux x86_64 with compiled release binaries:
 |---|---|---|
 | **Sigma AST Evaluation Throughput** | **2,557,939 evals/sec** | `spectre-rules/tests/benchmark_eval.rs` (100,000 runs) |
 | **Sigma AST Evaluation Latency** | **0.39 µs per evaluation** | Calculated from benchmark duration (39.09 ms for 100k evals) |
-| **Agent Resident Set Size (RSS)** | **4.8 MB** | `ps -o rss` during live ingestion |
-| **Static Release Executable Size** | **4.8 MB** | `ls -lh target/release/spectre-agent` |
+| **Agent Resident Set Size (RSS)** | **5.2 MB** | `ps -o rss` during live ingestion |
+| **Static Release Executable Size** | **5.5 MB** | `ls -lh target/release/spectre-agent` |
 | **Graph Eviction Lock Latency** | **< 30 µs** | 256-node slice budget on `BinaryHeap` |
-| **Workspace Test Suite** | **15 passed, 0 failed (100%)** | `cargo test --workspace` in < 0.6s |
+| **Workspace Test Suite** | **16 passed, 0 failed (100%)** | `cargo test --workspace` in < 0.6s |
 
 ---
 
@@ -106,11 +116,12 @@ All measurements were taken on Linux x86_64 with compiled release binaries:
 │       ├── telemetry.rs     # Binary envelope deserializer
 │       ├── enrichment.rs    # Graph-backed ancestor and lineage resolution
 │       ├── mitigation.rs    # Safety invariants, pidfd_send_signal, process tree SIGKILL
+│       ├── tui.rs           # Ratatui 30 FPS terminal UI & interactive Chain Inspector
 │       └── pipeline.rs      # Atomic throughput and drops metrics tracker
 ├── spectre-graph/           # Generational process graph library
 │   ├── Cargo.toml
 │   └── src/
-│       └── lib.rs           # StableDiGraph, ProcessKey(pid, start_time_ns), min-heap GC
+│       └── lib.rs           # StableDiGraph, ProcessKey, full chain extraction & min-heap GC
 ├── spectre-rules/           # Sigma AST engine library
 │   ├── Cargo.toml
 │   └── src/
@@ -121,5 +132,6 @@ All measurements were taken on Linux x86_64 with compiled release binaries:
 └── docs/                    # Architectural specifications and audit logs
     ├── architecture.md
     ├── build_guide.md
+    ├── blind_spots_and_evasion.md
     └── audit_and_remediation.md
 ```

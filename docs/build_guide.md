@@ -39,11 +39,12 @@ uname -r
 │       ├── telemetry.rs     # Binary envelope deserializer
 │       ├── enrichment.rs    # Graph-backed ancestor and lineage resolution
 │       ├── mitigation.rs    # Safety invariants, pidfd_send_signal, process tree SIGKILL
+│       ├── tui.rs           # Embedded 30 FPS terminal UI & interactive Chain Inspector
 │       └── pipeline.rs      # Atomic throughput and drops metrics tracker
 ├── spectre-graph/           # Generational process graph library
 │   ├── Cargo.toml
 │   └── src/
-│       └── lib.rs           # StableDiGraph, ProcessKey(pid, start_time_ns), min-heap GC
+│       └── lib.rs           # StableDiGraph, ProcessKey, full chain extraction & min-heap GC
 ├── spectre-rules/           # Sigma AST engine library
 │   ├── Cargo.toml
 │   └── src/
@@ -54,6 +55,7 @@ uname -r
 └── docs/                    # Architectural specifications and audit logs
     ├── architecture.md
     ├── build_guide.md
+    ├── blind_spots_and_evasion.md
     └── audit_and_remediation.md
 ```
 
@@ -85,10 +87,10 @@ Spectre includes automated unit tests, integration tests, and performance benchm
 ```bash
 cargo test --workspace
 ```
-All 15 tests across the workspace should pass:
+All 16 tests across the workspace should pass:
 * `spectre-agent`: 4 unit tests (telemetry envelope deserialization, PID safety invariants).
 * `spectre-agent`: 2 integration tests (parent behavioral rules, deep ancestry enrichment).
-* `spectre-graph`: 1 unit test (budgeted lazy min-heap eviction queue).
+* `spectre-graph`: 2 unit tests (budgeted lazy min-heap eviction queue, full execution chain extraction).
 * `spectre-rules`: 7 integration tests (Pratt AST parsing, nested parentheses, `AND`/`OR`/`NOT`, sequence list `OR`, `|all` `AND`, CIDR subnets, precompiled regexes).
 * `spectre-rules`: 1 benchmark test (100,000 synthetic AST evaluations).
 
@@ -106,24 +108,38 @@ Evaluated 100000 events in ~39 ms (rate: ~2,550,000 evals/sec, latency: ~0.39 µ
 
 ## 5. Execution Modes
 
-### 5.1 Mock Mode (Unprivileged, No Root Required)
-For development, verification, and testing on systems without BPF privileges:
-```bash
-./target/release/spectre-agent --mock
-```
-* Bypasses the eBPF kernel loader.
-* Feeds synthetic telemetry (`fork` and `exec` events) through the ingestion pipeline.
-* Exercises graph lineage enrichment, rule evaluation, and active containment alerts.
+### 5.1 Interactive Terminal UI (TUI) Mode
+The recommended mode for interactive inspection and testing:
 
-### 5.2 Production eBPF Mode (Requires Root)
-To monitor live kernel system calls:
 ```bash
+# Simulated mock mode with TUI (unprivileged, no root required)
+./target/release/spectre-agent --mock --tui
+
+# Production kernel eBPF mode with TUI (requires root / CAP_BPF)
+sudo ./target/release/spectre-agent --tui
+```
+
+#### TUI Navigation & Controls:
+| Key | Action |
+|---|---|
+| `[1]` - `[4]` | Jump directly to tab (`[1] Dashboard`, `[2] Lineage Tree`, `[3] Security Alerts`, `[4] Chain Inspector`) |
+| `[Tab]` / `[Shift-Tab]` | Cycle forward and backward through tabs |
+| `[↑ / ↓]` or `[j / k]` | Navigate and select process chains in Tab 4 (Chain Inspector) |
+| `[F]` | Cycle chain filter (`ALL (LIVE + OLD)` ➔ `LIVE REAL-TIME` ➔ `OLD / HISTORICAL`) |
+| `[Home]` / `[End]` | Jump to top / bottom of process chain list |
+| `[X]` | Clear security alerts feed |
+| `[Q]` / `[Ctrl-C]` | Cleanly exit and restore terminal screen |
+
+### 5.2 Headless / Daemon Mode (Systemd / Piping)
+For production daemon deployments, log shipping, or automated piping:
+
+```bash
+# Unprivileged mock mode (stdout logging)
+./target/release/spectre-agent --mock
+
+# Production eBPF mode (stdout logging)
 sudo ./target/release/spectre-agent
 ```
-* Loads `ebpf-c/sensor.o` into the Linux kernel using `aya`.
-* Attaches to the `syscalls/sys_enter_execve` tracepoint.
-* Streams execution events directly through the 4MB kernel ring buffer.
-* Automatically enriches events with process tree ancestry and evaluates loaded Sigma rules in real time.
 
 ---
 

@@ -10,12 +10,12 @@ All measurements were taken on compiled release binaries (`target/release/spectr
 
 | Metric | Measured Value | Benchmark Context |
 |---|---|---|
-| **Static Release Binary Size** | **4.8 MB** | Stripped release profile (`target/release/spectre-agent`) |
-| **Steady-State Memory (RSS)** | **4.8 MB** | Process resident set size measured via `ps -o rss` |
+| **Static Release Binary Size** | **5.5 MB** | Fully optimized release profile with TUI (`target/release/spectre-agent`) |
+| **Steady-State Memory (RSS)** | **5.2 MB** | Process resident set size measured via `ps -o rss` |
 | **Sigma AST Evaluation Rate** | **2,557,939 evals/sec** | Measured in `benchmark_eval.rs` over 100,000 synthetic iterations |
 | **Average Evaluation Latency** | **0.39 µs / eval** | Time required per complex multi-clause AST rule evaluation |
 | **Graph Eviction Lock Latency** | **< 30 µs** | Budgeted 256-node slice eviction in background worker |
-| **Test Suite Verification** | **15/15 passed (100%)** | `cargo test --workspace` across all crates in < 0.6s |
+| **Test Suite Verification** | **16/16 passed (100%)** | `cargo test --workspace` across all crates in < 0.6s |
 
 ---
 
@@ -71,6 +71,7 @@ All measurements were taken on compiled release binaries (`target/release/spectr
 | **Lazy Graph GC** | `spectre-graph/src/lib.rs` | $O(K \log M)$ min-heap lazy eviction queue (`BinaryHeap<Reverse<EvictionEntry>>`). Decoupled 2-second background Tokio task with 256-node slice budget. |
 | **Lineage Enrichment** | `spectre-agent/src/enrichment.rs` | Traverses graph to resolve `ParentImage`, `ParentCommandLine`, and `AncestorImages` before rule matching. |
 | **Mitigation Engine** | `spectre-agent/src/mitigation.rs` | Safety policy rejecting PID $\le 2$, self, parent, and system daemons. Uses `pidfd_send_signal` for race-free signaling, top-down `SIGSTOP` freeze, bottom-up `SIGKILL`, and cgroup v2 freeze. |
+| **Terminal UI (TUI)** | `spectre-agent/src/tui.rs` | Zero-port 30 FPS console interface (`ratatui` + `crossterm`) with 4 views: Dashboard, Lineage Tree, Security Alerts, and an interactive Chain Inspector supporting real-time and historical process graphs. |
 | **Pipeline Stats** | `spectre-agent/src/pipeline.rs` | Atomic metrics counters tracking throughput (events/sec), detection alerts, and ring buffer drops. |
 
 ---
@@ -99,22 +100,38 @@ cargo test --workspace
 
 ### 5. Execute Agent
 
-* **Mock Mode (Unprivileged, runs simulated attack and lineage detection):**
-  ```bash
-  ./target/release/spectre-agent --mock
-  ```
+#### Interactive Terminal UI (TUI) Mode:
+```bash
+# Simulated mock mode with full TUI (no root required)
+./target/release/spectre-agent --mock --tui
 
-* **Production eBPF Mode (Requires root / CAP_BPF):**
-  ```bash
-  sudo ./target/release/spectre-agent
-  ```
+# Production kernel eBPF mode with full TUI (requires root / CAP_BPF)
+sudo ./target/release/spectre-agent --tui
+```
+
+*TUI Key Bindings:*
+* `[Tab]` / `[1-4]`: Switch between tabs (`[1] Dashboard`, `[2] Lineage Tree`, `[3] Security Alerts`, `[4] Chain Inspector`).
+* `[↑ / ↓]` or `[j / k]`: Browse and select process chains in the Chain Inspector.
+* `[F]`: Cycle chain filter (`ALL (LIVE + OLD)` ➔ `LIVE REAL-TIME` ➔ `OLD / HISTORICAL`).
+* `[X]`: Clear security alert feed.
+* `[Q]` / `[Ctrl-C]`: Cleanly exit and restore terminal screen.
+
+#### Headless / Daemon Mode (Systemd / Piping):
+```bash
+# Mock mode (standard stdout logs)
+./target/release/spectre-agent --mock
+
+# Production eBPF mode (standard stdout logs)
+sudo ./target/release/spectre-agent
+```
 
 ---
 
 ## Technical Documentation
 
-Detailed architectural notes and verification records are available in `docs/`:
+Detailed architectural notes, audit records, and threat analyses are available in `docs/`:
 * [Technical Architecture Specification](docs/architecture.md)
+* [EDR Blind Spots, Kernel Evasion & Operational Realities](docs/blind_spots_and_evasion.md)
 * [Build & Operations Guide](docs/build_guide.md)
 * [Pessimistic Audit & Remediation Ledger](docs/audit_and_remediation.md)
 
