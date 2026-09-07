@@ -497,6 +497,36 @@ impl ProcessGraph {
         }
         total_stats
     }
+
+    pub fn node_count(&self) -> usize {
+        self.graph.node_count()
+    }
+
+    pub fn edge_count(&self) -> usize {
+        self.graph.edge_count()
+    }
+
+    pub fn format_recent_forest(&self, max_entries: usize) -> Vec<String> {
+        let mut lines = Vec::new();
+        for (&pid, key) in self.active_pids.iter().take(max_entries) {
+            let node_key = NodeKey::Process(*key);
+            if let Some(&idx) = self.key_to_index.get(&node_key) {
+                if let Some(NodePayload::Process(proc)) = self.graph.node_weight(idx) {
+                    let ancestors = self.resolve_ancestors(key, 3);
+                    let mut lineage_str = String::new();
+                    for anc in ancestors.iter().rev() {
+                        lineage_str.push_str(&format!("PID {} ({}) ➔ ", anc.key.pid, anc.comm));
+                    }
+                    lineage_str.push_str(&format!("PID {} [{}] (cmd: {})", pid, proc.comm, proc.cmdline));
+                    lines.push(lineage_str);
+                }
+            }
+        }
+        if lines.is_empty() {
+            lines.push("No active process lineages currently tracked in memory.".to_string());
+        }
+        lines
+    }
 }
 
 #[cfg(test)]
