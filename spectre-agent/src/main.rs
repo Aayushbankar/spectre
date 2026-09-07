@@ -131,6 +131,7 @@ async fn main() -> Result<(), anyhow::Error> {
     }
 
     let is_running = Arc::new(AtomicBool::new(true));
+    let alert_history = Arc::new(RwLock::new(HashMap::<u32, String>::new()));
 
     let graph = Arc::new(RwLock::new(ProcessGraph::new(60_000_000_000)));
     let _gc_handle = spawn_background_gc(Arc::clone(&graph));
@@ -178,6 +179,7 @@ async fn main() -> Result<(), anyhow::Error> {
     if tui_mode {
         let stats_c = Arc::clone(&stats);
         let graph_c = Arc::clone(&graph);
+        let alert_history_c = Arc::clone(&alert_history);
         let ui_tx_c = ui_tx.clone().unwrap();
         let is_running_c = Arc::clone(&is_running);
 
@@ -197,9 +199,77 @@ async fn main() -> Result<(), anyhow::Error> {
                 let rate = ((total_ingested.saturating_sub(last_events)) as f64 / elapsed_sec) as u64;
                 last_events = total_ingested;
 
-                let (nodes, tree_lines) = {
+                let (nodes, tree_lines, chain_items) = {
                     let g = graph_c.read();
-                    (g.node_count(), g.format_recent_forest(25))
+                    let nodes = g.node_count();
+                    let tree = g.format_recent_forest(25);
+                    let all_procs = g.list_all_processes();
+                    let alerts = alert_history_c.read();
+
+                    let mut chains = Vec::new();
+                    for p in all_procs.iter().take(60) {
+                        if let Some(info) = g.get_chain_info(&p.key) {
+                            let is_active = matches!(info.process.status, spectre_graph::ProcessStatus::Running);
+                            let exit_code = match info.process.status {
+                                spectre_graph::ProcessStatus::Exited { exit_code, .. } => Some(exit_code),
+                                _ => None,
+                            };
+                            let dur_ns = info.process.last_seen_ns.saturating_sub(info.process.key.start_time_ns);
+                            let dur_ms = dur_ns / 1_000_000;
+                            let duration_str = if dur_ms < 1000 {
+                                format!("{}ms", dur_ms)
+                            } else {
+                                format!("{:.1}s", dur_ms as f64 / 1000.0)
+                            };
+
+                            let ancestors = info.ancestors.iter().map(|a| tui::UiChainNode {
+                                pid: a.key.pid,
+                                comm: a.comm.clone(),
+                                cmdline: a.cmdline.clone(),
+                                uid: a.uid,
+                                is_active: matches!(a.status, spectre_graph::ProcessStatus::Running),
+                                exit_code: match a.status {
+                                    spectre_graph::ProcessStatus::Exited { exit_code, .. } => Some(exit_code),
+                                    _ => None,
+                                },
+                            }).collect();
+
+                            let children = info.children.iter().map(|c| tui::UiChainNode {
+                                pid: c.key.pid,
+                                comm: c.comm.clone(),
+                                cmdline: c.cmdline.clone(),
+                                uid: c.uid,
+                                is_active: matches!(c.status, spectre_graph::ProcessStatus::Running),
+                                exit_code: match c.status {
+                                    spectre_graph::ProcessStatus::Exited { exit_code, .. } => Some(exit_code),
+                                    _ => None,
+                                },
+                            }).collect();
+
+                            let files = info.files.iter().map(|f| f.to_string_lossy().to_string()).collect();
+                            let sockets = info.sockets.iter().map(|s| format!("{} -> {}", s.proto.to_uppercase(), s.remote_addr)).collect();
+
+                            let alert_title = alerts.get(&info.process.key.pid).cloned();
+
+                            chains.push(tui::UiChainItem {
+                                pid: info.process.key.pid,
+                                ppid: info.ppid.unwrap_or(0),
+                                comm: info.process.comm.clone(),
+                                cmdline: info.process.cmdline.clone(),
+                                uid: info.process.uid,
+                                is_active,
+                                exit_code,
+                                timestamp_str: format_time_now(),
+                                duration_str,
+                                ancestors,
+                                children,
+                                files,
+                                sockets,
+                                alert_title,
+                            });
+                        }
+                    }
+                    (nodes, tree, chains)
                 };
 
                 let m = UiMetrics {
@@ -212,6 +282,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
                 let _ = ui_tx_c.try_send(UiMessage::Metrics(m));
                 let _ = ui_tx_c.try_send(UiMessage::Tree(tree_lines));
+                let _ = ui_tx_c.try_send(UiMessage::Chains(chain_items));
             }
         });
     } else {
@@ -272,6 +343,26 @@ async fn main() -> Result<(), anyhow::Error> {
                     {
                         let mut g = graph.write();
                         g.record_spawn_by_ppid(*ppid, child_key, comm, &cmdline, 1000, ts);
+
+                        if *comm == "curl" {
+                            g.record_file_open(child_key, std::path::PathBuf::from("/tmp/malware.sh"), 0, 0, ts);
+                            g.record_socket_connect(child_key, spectre_graph::SocketKey {
+                                local_addr: "10.0.2.15:43210".into(),
+                                remote_addr: "evil-c2.com:80".into(),
+                                proto: "tcp".into(),
+                            }, ts);
+                            g.record_exit(child_key, 0, ts + 250_000_000);
+                        } else if *comm == "nc" {
+                            g.record_file_open(child_key, std::path::PathBuf::from("/bin/sh"), 0, 0, ts);
+                            g.record_socket_connect(child_key, spectre_graph::SocketKey {
+                                local_addr: "10.0.2.15:54321".into(),
+                                remote_addr: "192.168.1.50:4444".into(),
+                                proto: "tcp".into(),
+                            }, ts);
+                            g.record_exit(child_key, 137, ts + 600_000_000);
+                        } else if *comm == "python3" {
+                            g.record_exit(child_key, 1, ts + 350_000_000);
+                        }
                     }
 
                     let mut event_map = HashMap::new();
@@ -285,6 +376,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     }
 
                     if engine.evaluate(&event_map) {
+                        alert_history.write().insert(*pid, engine.rule_title.clone());
                         stats.inc_alerts();
                         let mitigation = mitigation::MitigationController::new();
                         let mit_result = mitigation.terminate_process_tree(*pid, None);
@@ -404,6 +496,7 @@ async fn main() -> Result<(), anyhow::Error> {
                             }
                             
                             if engine.evaluate(&event_map) {
+                                alert_history.write().insert(event.pid, engine.rule_title.clone());
                                 stats.inc_alerts();
                                 let mitigation = mitigation::MitigationController::new();
                                 let mit_result = mitigation.terminate_process_tree(event.pid, None);
