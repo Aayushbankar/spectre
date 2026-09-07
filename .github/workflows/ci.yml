@@ -1,173 +1,46 @@
 name: CI
 
 on:
+  push:
+    branches: [ main, spectre-v2-rewrite ]
+  pull_request:
+    branches: [ main, spectre-v2-rewrite ]
   workflow_dispatch:
-    inputs:
-      ref:
-        description: 'Branch to run CI on'
-        required: false
-        default: 'develop'
-        type: string
-
-env:
-  PYTHON_VERSION: "3.12"
 
 jobs:
-  lint:
-    name: Lint (ruff)
+  build-and-test:
+    name: Build & Test (Rust + eBPF)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install ruff
-        run: pip install ruff
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm libelf-dev make
 
-      - name: Run ruff check
-        run: ruff check .
-
-      - name: Run ruff format check
-        run: ruff format --check .
-
-  typecheck:
-    name: Type Check (mypy)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
+          components: rustfmt, clippy
 
-      - name: Install dependencies
+      - name: Compile eBPF Probe Bytecode
         run: |
-          pip install -e ".[dev,yara]"
+          make -C ebpf-c
 
-      - name: Run mypy
-        run: mypy spectre cli
-
-  test:
-    name: Tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-
-      - name: Install dependencies
+      - name: Cargo Check
         run: |
-          pip install -e ".[dev,yara]"
+          cargo check --workspace
 
-      - name: Run tests
+      - name: Run Test Suite
         run: |
-          pytest -v --tb=short --cov=spectre --cov=cli --cov-report=xml
+          cargo test --workspace
 
-      - name: Upload coverage
-        uses: codecov/codecov-action@v3
-        with:
-          files: ./coverage.xml
-          fail_ci_if_error: false
-
-  test-rules:
-    name: Rule Tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-
-      - name: Install dependencies
+      - name: Run AST Evaluation Benchmark
         run: |
-          pip install -e ".[dev,yara]"
+          cargo test -p spectre-rules --test benchmark_eval -- --nocapture
 
-      - name: Test rule loading
+      - name: Build Release Binaries
         run: |
-          python -c "
-          from spectre.rules import load_rules_from_file
-          rules = load_rules_from_file('rules.json')
-          print(f'Loaded {len(rules)} rules from rules.json')
-          for r in rules:
-              print(f'  - {r.id}: {r.name} (score: {r.score})')
-          "
-
-      - name: Test default rules
-        run: |
-          python -c "
-          from spectre.rules import DEFAULT_RULES
-          print(f'Loaded {len(DEFAULT_RULES)} default rules')
-          for r in DEFAULT_RULES:
-              print(f'  - {r.id}: {r.name} (score: {r.score})')
-          "
-
-  build:
-    name: Build Package
-    runs-on: ubuntu-latest
-    needs: [lint, typecheck, test]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install build tools
-        run: pip install build
-
-      - name: Build package
-        run: python -m build
-
-      - name: Verify package
-        run: |
-          ls -la dist/
-          pip install dist/*.whl
-          spectre --help
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/
-          retention-days: 7
-
-  docker:
-    name: Docker Build
-    runs-on: ubuntu-latest
-    needs: [lint, typecheck, test]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: false
-          tags: spectre/hids:test
-          platforms: linux/amd64
-          load: true
-
-      - name: Test Docker image
-        run: |
-          docker run --rm --privileged --pid=host spectre/hids:test --help
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+          cargo build --release --workspace
