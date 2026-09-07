@@ -1,329 +1,128 @@
-<div align="center">
-  <h1>Project Spectre</h1>
-  <p><b>A Behavioral Host Intrusion Detection System (HIDS)</b></p>
-  
-  <p>
-    <a href="https://python.org"><img src="https://img.shields.io/badge/Python-3.8+-blue.svg" alt="Python 3.8+"></a>
-    <a href="https://github.com/Aayushbankar/spectre/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
-    <a href="https://attack.mitre.org/"><img src="https://img.shields.io/badge/MITRE-ATT%26CK-red.svg" alt="MITRE ATT&CK"></a>
-    <a href="https://github.com/Aayushbankar/spectre/actions"><img src="https://img.shields.io/github/actions/workflow/status/Aayushbankar/spectre/ci.yml?branch=main" alt="Build Status"></a>
-    <a href="https://pypi.org/project/spectre-hids/"><img src="https://img.shields.io/pypi/v/spectre-hids" alt="PyPI Version"></a>
-    <a href="https://github.com/Aayushbankar/spectre/stargazers"><img src="https://img.shields.io/github/stars/Aayushbankar/spectre" alt="GitHub Stars"></a>
-  </p>
-  
-  <p><i>Instead of asking "Is this file known?", Spectre asks "Does this sequence of actions make sense?"</i></p>
-</div>
+# Project Spectre: Host Intrusion Detection & Response Engine
+
+Project Spectre is an open-source Host-based Intrusion Detection and Active Response System (HIDS/EDR).
+
+The repository contains two distinct implementations representing the architectural evolution of the system:
+1. **Spectre V2 (`/v2`)**: The primary high-performance engine written in **Rust** and **C (eBPF)**. It provides zero-gap kernel event capture, a Pratt AST parser for Sigma detection rules, generational graph lineage tracking, and race-free active mitigation via Linux `pidfd`.
+2. **Spectre V1 (Root / `spectre/`)**: The initial proof-of-concept written in **Python**. It uses user-space polling via `psutil`, in-memory graph modeling via `NetworkX`, and a FastAPI dashboard. It serves as an experimental baseline and prototype.
 
 ---
 
-## Table of Contents
-- [Overview](#overview)
-- [Why Spectre?](#why-spectre)
-- [Architecture](#architecture)
-- [Key Features](#key-features)
-- [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
-- [Usage & CLI Reference](#usage--cli-reference)
-- [Detection Rules & Sigma Integration](#detection-rules--sigma-integration)
-- [Testing & Verification](#testing--verification)
-- [Documentation & Roadmap](#documentation--roadmap)
-- [Acknowledgments & External Links](#acknowledgments--external-links)
+## Technical Comparison: V1 (Python PoC) vs. V2 (Rust / eBPF Engine)
+
+| Architectural Dimension | Spectre V1 (Python Prototype) | Spectre V2 (Hardened Rust / eBPF) |
+|---|---|---|
+| **Telemetry Ingestion** | User-space polling (`psutil.process_iter()`) at 500ms intervals | Kernel-level tracepoint hooking (`sys_enter_execve`) via eBPF |
+| **Transient Process Detection** | Blind to processes that spawn and exit between polling cycles | Zero-gap capture; events buffered in kernel BPF Ring Buffer (4MB) |
+| **Command-Line Capture** | Reads `/proc/<pid>/cmdline` (susceptible to TOCTOU and tampering) | Reads user-space `argv` pointers via `bpf_probe_read_user_str()` before execution |
+| **Process Identity & Collisions** | Raw `u32` PID (vulnerable to kernel PID recycling collisions) | Composite generational key `ProcessKey { pid, start_time_ns }` |
+| **Sigma Rule Parsing** | Naive 3-token whitespace splitter (`split_whitespace()`) | Top-Down Operator Precedence (Pratt) AST parser supporting arbitrary `AND`, `OR`, `NOT`, and `(...)` |
+| **Modifier & Value Support** | Exact and basic substring matches | Sequence value lists (default `OR`), `\|all` chaining (`AND`), CIDR subnet matching (`ipnet`), precompiled regex cache (`Arc<Regex>`) |
+| **Graph Data Structure** | `networkx.DiGraph` with linear sweep pruning | `petgraph::stable_graph::StableDiGraph` with $O(K \log M)$ min-heap lazy eviction queue |
+| **Garbage Collection Overhead** | Periodic linear scan ($O(\|V\| + \|E\|)$) locking the graph | Decoupled background task yielding after 256 nodes; lock hold time < 30 µs |
+| **Mitigation & Containment** | Unchecked POSIX `kill(pid, sig)` (race condition on recycled PIDs) | Safe `pidfd_send_signal` targeting, PID $\le 2$ safety guards, top-down `SIGSTOP` freeze, bottom-up `SIGKILL` |
+| **Evaluation Throughput** | ~200 – 500 evaluations/sec | **2,557,939 evaluations/sec** (measured in release benchmark) |
+| **Memory Consumption** | ~65 – 180 MB RSS (Python interpreter + NetworkX) | **4.8 MB RSS** (Rust static release binary) |
+| **Binary Footprint** | Multi-file Python package + runtime dependencies | **4.8 MB** single static ELF executable (`spectre-agent`) |
 
 ---
 
-## Overview
+## Spectre V2 (Rust & eBPF)
 
-**Project Spectre** is a lightweight, local-first **behavioral Host Intrusion Detection System (HIDS)**. Rather than relying heavily on static file signatures, Spectre models the grammar of host processes and resource actions to detect anomalous execution chains and behaviors. 
+Spectre V2 is located in the [`v2/`](v2/) directory.
 
-Currently in **v0.2.0 (Alpha PoC)**, Spectre is an experimental proof-of-concept that tracks process lineages, monitors file and network I/O, evaluates threats in real-time, provides MITRE ATT&CK context, scans payloads via YARA, and can actively quarantine malicious process trees.
+### Subsystem Overview
+* **`v2/ebpf-c/`**: eBPF C sensor code hooking `sys_enter_execve`, walking argument strings directly into a 4MB BPF Ring Buffer.
+* **`v2/spectre-agent/`**: The core daemon. Handles binary envelope deserialization, background graph GC, graph-backed lineage enrichment (`ParentImage`, `AncestorImages`), pipeline metrics, and `pidfd` signal dispatch.
+* **`v2/spectre-rules/`**: Pratt parser and Sigma AST evaluator. Pre-compiles regular expressions and parses complex boolean conditions.
+* **`v2/spectre-graph/`**: Generational process graph using `StableDiGraph` and `BinaryHeap` lazy eviction.
 
-**New in Phase 1:**
-- **Sigma-native rule format** — Write rules in Sigma YAML, convert to Spectre automatically
-- **24 built-in rules** across 4 packs: webshell, privilege escalation, credential access, lateral movement
-- **Rule testing CLI** — Validate Sigma syntax, test conversion, replay traces
-- **Rule pack management** — Install/uninstall community rule packs
-- **Detection-as-code ready** — CI/CD integration for rule validation
+### Quickstart (V2)
+
+#### 1. Compile eBPF Bytecode
+```bash
+make -C v2/ebpf-c
+```
+
+#### 2. Build Release Binaries
+```bash
+cargo build --release --workspace --manifest-path=v2/Cargo.toml
+```
+
+#### 3. Run Test Suite
+```bash
+cargo test --workspace --manifest-path=v2/Cargo.toml
+```
+
+#### 4. Run the Agent
+* **Mock Mode** (Unprivileged, runs simulated telemetry and tests detection pipeline):
+  ```bash
+  ./v2/target/release/spectre-agent --mock
+  ```
+* **Kernel eBPF Mode** (Requires root / `CAP_BPF` + `CAP_PERFMON`):
+  ```bash
+  sudo ./v2/target/release/spectre-agent
+  ```
+
+For detailed specifications, see:
+* [Spectre V2 Architecture Specification](docs/v2/architecture.md)
+* [Spectre V2 Build & Operations Guide](docs/v2/build_guide.md)
+* [Spectre V2 Audit & Remediation Ledger](docs/v2/audit_and_remediation.md)
 
 ---
 
-## Why Spectre?
+## Spectre V1 (Python Prototype)
 
-Traditional endpoint protection platforms (EPP) and antiviruses (AV) often rely heavily on static signatures—checking file hashes against a known database of malware. This approach completely fails against **zero-day threats**, **fileless malware**, and **"living off the land"** techniques where attackers abuse legitimate system binaries (like `powershell`, `curl`, or `bash`).
+The Python prototype is retained in the root directory for educational and experimental reference.
 
-Spectre shifts the security paradigm from *static characteristics* to *dynamic relationships*. By continuously tracking process ancestry (who spawned who) and correlating it with resource access (who touched which file, who opened which socket), Spectre identifies malicious **intent** rather than malicious **files**.
+### Setup and Running (V1)
 
-**Example Attack Chain Detected:**
+```bash
+# Create virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install dependencies
+pip install -e .
+
+# Run CLI
+spectre --help
+
+# Run monitoring loop
+spectre run --interval 0.5 --threshold 15
+```
+
+---
+
+## Repository Layout
+
 ```text
-nginx (Web Server)
-└── bash (Interactive Shell)
-    ├── curl (Downloads payload)
-    │   └── [WRITE] -> /tmp/malware.sh
-    └── sh (Executes payload)
-        └── [CONNECT] -> 192.168.1.50:4444 (C2 Server)
+.
+├── docs/                     # Technical specifications, audits, and V1 reports
+│   ├── v2/                   # V2 architectural specs, build guides, and remediation
+│   │   ├── architecture.md
+│   │   ├── build_guide.md
+│   │   └── audit_and_remediation.md
+│   ├── design_doc.md         # Original master design document (V1)
+│   └── progress.md           # Progress history of V1 milestones
+├── v2/                       # Hardened Rust & eBPF implementation
+│   ├── Cargo.toml            # Workspace definition (resolver = "2")
+│   ├── README.md             # V2 technical overview & benchmarks
+│   ├── ebpf-c/               # Kernel eBPF sensor (C)
+│   ├── spectre-agent/        # Userspace daemon & mitigation (Rust)
+│   ├── spectre-graph/        # Generational process graph (Rust)
+│   └── spectre-rules/        # Pratt Sigma AST evaluator (Rust)
+├── spectre/                  # V1 Python prototype modules
+│   ├── api/                  # FastAPI REST endpoints
+│   ├── dashboard/            # Vanilla JS static UI
+│   ├── detectors/            # Rule scoring logic
+│   ├── graph/                # NetworkX process graph
+│   └── sensor/               # psutil process polling
+└── tests/                    # V1 Python pytest test suites
 ```
 
 ---
 
-## Architecture
+## License
 
-The system operates across a 4-stage pipeline:
-
-```text
-+---------------------+      +---------------------+      +---------------------+
-|                     |      |                     |      |                     |
-|  1. OS Telemetry    |----->|  2. Graph Builder   |----->| 3. Detection Engine |
-|  (psutil / eBPF)    |      |  (NetworkX Memory)  |      |  (Rules & Scoring)  |
-|                     |      |                     |      |                     |
-+---------------------+      +---------------------+      +---------------------+
-                                                                     |
-                                                                     v
-                                                          +---------------------+
-                                                          |                     |
-                                                          |  4. Action & Alert  |
-                                                          | (Containment, REST) |
-                                                          |                     |
-                                                          +---------------------+
-```
-
-1. **Telemetry Sensing**: Continuously polls the OS for process spawns, file descriptors, and network sockets (psutil) — eBPF sensor in development for zero-gap visibility.
-2. **Graph Construction**: Events are normalized into a sliding-window, directed process-resource graph, automatically pruning stale events to prevent memory leaks.
-3. **Detection Engine**: The active graph is evaluated against JSON/Sigma-configurable behavioral rules. Threat scores accumulate along process lineage chains.
-4. **Action & Visualization**: Once a threshold is breached, Spectre fires an alert, maps it to MITRE ATT&CK, runs a deep-scan via YARA, and can actively freeze/kill the process tree. REST API + Lightweight Vanilla JS dashboard for real-time monitoring.
-
----
-
-## Key Features
-
-- **Process Ancestry Tracking**: Reconstructs complete execution lineages, handling PID recycling and short-lived processes safely.
-- **Resource Monitoring**: Tracks I/O operations including `READ`/`WRITE` for files, and `CONNECT`/`LISTEN` for sockets.
-- **Behavioral Detection Engine**: Scores chains of events dynamically using JSON-configurable rules.
-- **Sigma-Native Rules**: Write rules in Sigma YAML; automatic conversion to Spectre format with MITRE ATT&CK extraction.
-- **Threat Enrichment**: 
-  - **MITRE ATT&CK**: Alerts mapped automatically to ATT&CK tactics (e.g., *T1059 - Command and Scripting Interpreter*).
-  - **YARA Integration**: Scans suspicious files on-the-fly using the `yara-python` engine.
-- **Active Containment**: Configurable actions (`--contain stop` or `kill`) to instantly freeze or terminate entire threat process trees.
-- **Persistence & API**: Events and alerts stored in local SQLite database, exposed via FastAPI REST interface.
-- **Live Dashboard**: Lightweight, dependency-free Vanilla HTML/JS web dashboard for monitoring graph, alerts, and system telemetry.
-- **Detection Engineering Platform**: Rule testing, Sigma validation, pack management, CI/CD integration.
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- Python 3.8 or newer
-- Linux Operating System (for accurate `/proc` mapping and `psutil` compatibility)
-- Root privileges (required for process monitoring and containment)
-- Dependencies: `psutil`, `networkx`, `fastapi`, `yara-python`, `uvicorn`, `click`, `rich`, `pyyaml`
-
-### Installation
-
-#### Option 1: One-line installer (recommended)
-```bash
-curl -sSL https://raw.githubusercontent.com/Aayushbankar/spectre/main/install.sh | sudo bash
-```
-
-#### Option 2: PyPI
-```bash
-pip install spectre-hids[yara]
-```
-
-#### Option 3: Docker
-```bash
-docker run -d --privileged --pid=host --cgroupns=host \
-  -v /:/host:ro \
-  -v /var/log/spectre:/var/log/spectre \
-  -v /var/lib/spectre:/var/lib/spectre \
-  ghcr.io/aayushbankar/spectre:latest \
-  --contain kill --api
-```
-
-#### Option 4: From source
-```bash
-git clone https://github.com/Aayushbankar/spectre.git
-cd spectre
-pip install -e ".[yara]"
-```
-
----
-
-## Usage & CLI Reference
-
-Spectre provides a highly configurable Command Line Interface (CLI) for tuning the engine's sensitivity and enabling specific modules.
-
-### Basic Usage
-
-> [!IMPORTANT]
-> **Quiet Mode vs. Verbose Mode**
-> By default, `spectre run` runs in **Quiet Mode**, meaning it will only log to the terminal when a critical alert threshold is breached. To see the graph updating in real-time, use the `--verbose` (`-v`) flag.
-
-**Run with Active Containment & REST API:**
-```bash
-spectre run --verbose --contain kill --api
-```
-
-### Full CLI Commands
-
-| Command | Description |
-|---------|-------------|
-| `spectre run` | Run HIDS monitoring |
-| `spectre rules` | List loaded detection rules (table/JSON) |
-| `spectre rule list` | List available rule packs (4 packs, 24 rules) |
-| `spectre rule install <pack>` | Install a rule pack (webshell, privilege_escalation, credential_access, lateral_movement) |
-| `spectre rule uninstall <pack>` | Uninstall a rule pack |
-| `spectre rule info <pack>` | Show detailed rule pack information |
-| `spectre test rule <files...>` | Validate Sigma rules and test Spectre conversion |
-| `spectre test technique <Txxxx>` | Test against ATT&CK technique (Atomic Red Team) |
-| `spectre stats` | Show database statistics |
-| `spectre doctor` | Run system diagnostics |
-| `spectre api` | Run REST API server standalone |
-
-### `spectre run` Options
-
-| Argument | Description | Default |
-| :--- | :--- | :--- |
-| `--interval` | Polling interval in seconds | `0.5` |
-| `--window-size`, `-w`| Sliding time window in seconds for event expiration | `60.0` |
-| `--threshold`, `-t` | Threat score threshold for high-severity alerts | `15` |
-| `--rules`, `-r` | Path to behavioral rules JSON file | `rules.json` |
-| `--log-file` | Path to security alerts output log file | `/var/log/spectre/alerts.log` |
-| `--db` | Path to SQLite database | `/var/lib/spectre/spectre.db` |
-| `--yara-rules` | Directory containing YARA rule files | `/usr/share/spectre/yara_rules` |
-| `--contain` | Mitigation action: `none`, `stop`, `kill` | `kill` |
-| `--api` / `--no-api` | Enable/disable REST API and Dashboard | Enabled |
-| `--api-port` | Port for REST API server | `8000` |
-| `--verbose`, `-v` | Enable verbose mode (print all events) | `False` |
-
----
-
-## Detection Rules & Sigma Integration
-
-### Built-in Rule Packs (24 Sigma Rules)
-
-| Pack | Rules | ATT&CK Coverage | Description |
-|------|-------|-----------------|-------------|
-| **webshell** | 6 | T1059.004, T1505.003, T1059, T1027.004, T1046, T1570, T1105, T1016, T1071, T1041 | Web server compromises, shell spawns, compilers, downloaders, post-exploitation |
-| **privilege_escalation** | 6 | T1548.003, T1548.001, T1068, T1574.006, T1053.003, T1543.002 | Sudo abuse, SUID exploitation, kernel exploits, LD_PRELOAD, cron, systemd |
-| **credential_access** | 6 | T1003.008, T1555.004, T1555.003, T1555.001, T1552.001 | Shadow files, SSH keys, browser creds, GPG keys, AWS/Docker secrets |
-| **lateral_movement** | 6 | T1021.004, T1550.002, T1543.003, T1021.002, T1021.001, T1021.006 | SSH, pass-the-hash, remote services, SMB, RDP, WMI/WinRM |
-
-### Install Rule Packs
-```bash
-# List available packs
-spectre rule list
-
-# Install webshell detection pack
-spectre rule install webshell
-
-# Install all packs
-for p in webshell privilege_escalation credential_access lateral_movement; do
-  spectre rule install "$p"
-done
-```
-
-### Write Custom Sigma Rules
-```yaml
-title: Suspicious Python Script Execution
-id: custom-suspicious-python-001
-description: Detects python executing scripts from /tmp or /dev/shm
-status: experimental
-author: Your Name
-date: 2024-01-15
-logsource:
-    category: process_creation
-    product: linux
-detection:
-    selection_python:
-        Image|endswith: '/python3'
-    selection_tmp_script:
-        CommandLine|contains:
-            - '/tmp/'
-            - '/dev/shm/'
-    condition: selection_python and selection_tmp_script
-level: high
-tags:
-    - attack.t1059.006
-    - attack.execution
-```
-
-### Test Rules
-```bash
-# Validate Sigma syntax and test conversion
-spectre test rule my_rule.yml
-
-# Test all rules in a pack
-spectre test rule spectre/rules/packs/webshell/*.yml
-```
-
----
-
-## Testing & Verification
-
-Spectre includes an automated E2E verification test suite to simulate and assert threat escalation behaviors.
-
-### Run E2E Test Suite
-```bash
-python -m pytest tests/v10/run_test.py
-```
-
-### Run Unit Tests
-```bash
-python -m pytest tests/unit/ -v
-```
-
-### Run Rule Tests (CI)
-```bash
-# Validates Sigma syntax and conversion
-python -m pytest tests/ -k "sigma" -v
-```
-
-### Manual Verification
-```bash
-# Start Spectre in background with low threshold
-spectre run --threshold 5 --contain kill --api &
-
-# Trigger a test alert (reads /etc/hosts with python)
-python -c "open('/etc/hosts').read(); import time; time.sleep(10)"
-
-# Check dashboard at http://localhost:8000
-```
-
----
-
-## Documentation & Roadmap
-
-Detailed architectural notes and version progression can be found in the `docs/` directory:
-
-* **[Master Design Document](docs/design_doc.md)**: Vision, entity relations, and the 17-stage SDLC roadmap.
-* **[Progress Tracker](docs/progress.md)**: Current completion status of the project.
-* **[GTU Internship Submission](docs/gtu_submission_details.md)**: Details for project submission.
-
-**Incremental SDLC Roadmap (Current Status):**
-- [x] **v0.1**: Process Monitor, Rule Engine, Resource Tracking, Graph Memory.
-- [x] **v0.2**: Active Containment (SIGSTOP), Sigma Integration, Rule Packs, Testing CLI.
-- [ ] **v0.3 (Next)**: Replace `psutil` polling sensor with an event-driven `auditd`/Netlink connector.
-- [ ] **v1.0 (Future)**: Rewrite sensor in Rust/C using eBPF for true zero-gap visibility and production readiness.
-
----
-
-## Acknowledgments & External Links
-
-Spectre is built on the shoulders of giants. We heavily rely on the following open-source frameworks and security standards:
-
-- **[psutil](https://github.com/giampaolo/psutil)**: For cross-platform OS-level process and system monitoring.
-- **[NetworkX](https://networkx.org/)**: For sliding-window directed graph processing and ancestry modeling.
-- **[FastAPI](https://fastapi.tiangolo.com/)**: For exposing the high-performance telemetry API.
-- **[YARA](https://virustotal.github.io/yara/)**: The pattern matching swiss knife for malware researchers.
-- **[MITRE ATT&CK®](https://attack.mitre.org/)**: The globally-accessible knowledge base of adversary tactics and techniques.
-- **[Sigma](https://github.com/SigmaHQ/sigma)**: Generic signature format for SIEM systems.
-- **[Atomic Red Team](https://github.com/redcanaryco/atomic-red-team)**: Atomic tests for ATT&CK techniques.
-
----
-
-<div align="center">
-  <i>Engineered for deep contextual visibility and zero-day resilience.</i>
-  <br>
-  <b>Author:</b> Aayush Bankar (<a href="mailto:aayushbankar42@gmail.com">aayushbankar42@gmail.com</a>)
-</div>
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.

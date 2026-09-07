@@ -57,7 +57,7 @@ int handle_execve(struct trace_event_raw_sys_enter *ctx) {
     unsigned int args_off = 0;
     event->args_count = 0;
 
-    #pragma clang loop unroll(full)
+    #pragma unroll
     for (int i = 0; i < MAX_ARGS; i++) {
         if (args_off > LAST_ARG_OFFSET)
             break;
