@@ -92,9 +92,6 @@ All measurements were taken on Linux x86_64 with compiled release binaries:
 ├── README.md                # System overview and benchmarks
 ├── PROJECT_SUMMARY.md       # Technical capabilities and architecture summary
 ├── .gitignore               # Rust/eBPF build artifacts ignore rules
-├── .github/
-│   └── workflows/
-│       └── ci.yml           # Rust & eBPF CI pipeline
 ├── ebpf-c/                  # Kernel-space eBPF C implementation
 │   ├── Makefile             # Clang build automation for BPF bytecode
 │   ├── include/
